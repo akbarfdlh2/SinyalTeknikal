@@ -400,7 +400,7 @@ hr { border-color: var(--ln) !important; margin: .75rem 0 !important; }
 # CONSTANTS
 # ════════════════════════════════════════════════════
 
-IDX_UNIVERSE = {
+IDX_FALLBACK_UNIVERSE = {
     "BBCA": "Bank BCA",         "BBRI": "Bank BRI",
     "BMRI": "Bank Mandiri",      "BBNI": "Bank BNI",
     "BBTN": "Bank BTN",          "BRIS": "Bank Syariah Indonesia",
@@ -426,6 +426,22 @@ IDX_UNIVERSE = {
     "MIKA": "Mitra Keluarga",    "TKIM": "Tjiwi Kimia",
     "INKP": "Indah Kiat",        "SIDO": "Sido Muncul",
     "ESSA": "Emas Mineral",      "ENRG": "Energi Mega",
+}
+
+US_FALLBACK_UNIVERSE = {
+    "AAPL": "Apple",             "MSFT": "Microsoft",
+    "NVDA": "NVIDIA",            "AMZN": "Amazon",
+    "GOOGL": "Alphabet",         "META": "Meta Platforms",
+    "TSLA": "Tesla",             "AVGO": "Broadcom",
+    "AMD": "Advanced Micro Devices",
+    "NFLX": "Netflix",           "PLTR": "Palantir",
+    "INTC": "Intel",             "QCOM": "Qualcomm",
+    "MU": "Micron Technology",   "JPM": "JPMorgan Chase",
+    "BAC": "Bank of America",    "V": "Visa",
+    "MA": "Mastercard",          "WMT": "Walmart",
+    "COST": "Costco",            "KO": "Coca-Cola",
+    "DIS": "Walt Disney",        "UBER": "Uber",
+    "CRM": "Salesforce",         "ORCL": "Oracle",
 }
 
 CRYPTO_UNIVERSE = {
@@ -490,6 +506,89 @@ LEVEL_STYLE = {
 # ════════════════════════════════════════════════════
 # DATA & INDICATORS
 # ════════════════════════════════════════════════════
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_idx_markets() -> dict:
+    try:
+        query = yf.EquityQuery(
+            "and",
+            [
+                yf.EquityQuery("eq", ["region", "id"]),
+                yf.EquityQuery("gt", ["dayvolume", 0]),
+            ],
+        )
+        markets = []
+        offset = 0
+        page_size = 250
+
+        while True:
+            result = yf.screen(
+                query,
+                offset=offset,
+                size=page_size,
+                sortField="dayvolume",
+                sortAsc=False,
+            )
+            quotes = result.get("quotes", [])
+            for quote in quotes:
+                symbol = quote.get("symbol", "")
+                if not symbol.endswith(".JK") or quote.get("quoteType") != "EQUITY":
+                    continue
+                code = symbol.removesuffix(".JK")
+                name = quote.get("shortName") or quote.get("longName") or code
+                markets.append((code, name))
+
+            offset += len(quotes)
+            if not quotes or offset >= result.get("total", 0):
+                break
+
+        return dict(markets) or IDX_FALLBACK_UNIVERSE
+    except Exception:
+        return IDX_FALLBACK_UNIVERSE
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_us_markets() -> dict:
+    try:
+        query = yf.EquityQuery(
+            "and",
+            [
+                yf.EquityQuery("eq", ["region", "us"]),
+                yf.EquityQuery(
+                    "is-in",
+                    ["exchange", "NMS", "NGM", "NCM", "NYQ", "ASE"],
+                ),
+                yf.EquityQuery("gt", ["dayvolume", 0]),
+                yf.EquityQuery("gte", ["intradaymarketcap", 1_000_000_000]),
+            ],
+        )
+        markets = []
+        page_size = 250
+        max_results = 1000
+
+        for offset in range(0, max_results, page_size):
+            result = yf.screen(
+                query,
+                offset=offset,
+                size=page_size,
+                sortField="dayvolume",
+                sortAsc=False,
+            )
+            quotes = result.get("quotes", [])
+            for quote in quotes:
+                symbol = quote.get("symbol", "")
+                if not symbol or quote.get("quoteType") != "EQUITY":
+                    continue
+                name = quote.get("shortName") or quote.get("longName") or symbol
+                markets.append((symbol, name))
+
+            if not quotes or offset + len(quotes) >= result.get("total", 0):
+                break
+
+        return dict(markets) or US_FALLBACK_UNIVERSE
+    except Exception:
+        return US_FALLBACK_UNIVERSE
+
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_indodax_markets() -> tuple[dict, dict]:
@@ -1085,7 +1184,7 @@ def make_chart(df: pd.DataFrame, label: str, levels: dict = None, cur: str = "ID
 st.markdown("""
 <div class="app-hdr">
   <h1>📈 Sinyal Teknikal</h1>
-  <p>Scanner swing trading · Saham IDX & Crypto · Entry / TP1 / TP2 / TP3 / SL dari level nyata ·
+  <p>Scanner swing trading · Saham IDX, US & Crypto · Entry / TP1 / TP2 / TP3 / SL dari level nyata ·
      Overnight hingga 1 bulan · ⚠️ Bukan rekomendasi investasi</p>
 </div>
 """, unsafe_allow_html=True)
@@ -1140,6 +1239,8 @@ with st.container():
     st.markdown("</div>", unsafe_allow_html=True)
 
 h_params = HORIZONS[horizon_name]
+idx_universe = load_idx_markets()
+us_universe = load_us_markets()
 indodax_universe, indodax_price_steps = load_indodax_markets()
 
 
@@ -1154,15 +1255,32 @@ with tab_scan:
     # ── Pilih aset ──────────────────────────────────
     asset_type = st.radio(
         "Aset",
-        ["📊 Saham IDX", "₿ Crypto USD", "Crypto Indodax (IDR)"],
+        ["📊 Saham IDX", "Saham US", "₿ Crypto USD", "Crypto Indodax (IDR)"],
         horizontal=True,
         label_visibility="collapsed",
     )
     if asset_type.startswith("📊"):
-        universe = IDX_UNIVERSE
+        scan_limit = st.select_slider(
+            "Jumlah saham IDX",
+            options=[25, 50, 100, 150],
+            value=50,
+            help="Saham dipilih berdasarkan volume transaksi harian terbesar di Yahoo Finance.",
+        )
+        universe = dict(list(idx_universe.items())[:scan_limit])
         scan_source = "yahoo"
         scan_cur = "IDR"
-        scan_label = "saham IDX"
+        scan_label = f"saham IDX teraktif dari {len(idx_universe)} saham tersedia"
+    elif asset_type == "Saham US":
+        scan_limit = st.select_slider(
+            "Jumlah saham US",
+            options=[25, 50, 100, 150],
+            value=50,
+            help="Saham berkapitalisasi minimal USD 1 miliar, diurutkan berdasarkan volume harian.",
+        )
+        universe = dict(list(us_universe.items())[:scan_limit])
+        scan_source = "yahoo"
+        scan_cur = "USD"
+        scan_label = f"saham US teraktif dari {len(us_universe)} saham tersedia"
     elif asset_type.startswith("₿"):
         universe = CRYPTO_UNIVERSE
         scan_source = "yahoo"
@@ -1192,7 +1310,11 @@ with tab_scan:
             + (
                 "Request Indodax diberi jeda agar aman terhadap rate limit."
                 if scan_source == "indodax"
-                else ""
+                else (
+                    "Data Yahoo Finance dapat mengalami delay saat jam bursa."
+                    if asset_type.startswith("📊") or asset_type == "Saham US"
+                    else ""
+                )
             )
         )
 
@@ -1346,7 +1468,7 @@ with tab_detail:
     with col_m:
         mode = st.radio(
             "Aset",
-            ["Saham IDX", "Crypto USD", "Crypto Indodax", "Manual"],
+            ["Saham IDX", "Saham US", "Crypto USD", "Crypto Indodax", "Manual"],
         )
 
     with col_t:
@@ -1354,12 +1476,21 @@ with tab_detail:
         if mode == "Saham IDX":
             pick   = st.selectbox(
                 "Saham",
-                list(IDX_UNIVERSE.keys()),
-                format_func=lambda k: f"{k}  —  {IDX_UNIVERSE[k]}",
+                list(idx_universe.keys()),
+                format_func=lambda k: f"{k}  —  {idx_universe[k]}",
             )
             ticker = f"{pick}.JK"
             chart_label = pick
             det_cur = "IDR"
+        elif mode == "Saham US":
+            pick = st.selectbox(
+                "Saham US",
+                list(us_universe.keys()),
+                format_func=lambda k: f"{k}  —  {us_universe[k]}",
+            )
+            ticker = pick
+            chart_label = pick
+            det_cur = "USD"
         elif mode == "Crypto USD":
             pick   = st.selectbox(
                 "Koin",
