@@ -2,6 +2,8 @@
 Sinyal Teknikal — Swing Trading Scanner IDX
 """
 
+import datetime as dt
+
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
@@ -16,7 +18,7 @@ st.set_page_config(
     page_title="Sinyal Teknikal",
     page_icon="📈",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 # ════════════════════════════════════════════════════
@@ -84,17 +86,6 @@ st.markdown("""
 }
 .app-hdr p { color: var(--t2); font-size: .82rem; margin: 0; }
 
-/* ── Sidebar ── */
-[data-testid="stSidebar"] {
-  background: var(--c1) !important;
-  border-right: 1px solid var(--ln) !important;
-}
-[data-testid="stSidebar"] .block-container { padding: 1.5rem 1rem !important; }
-.sidebar-hdr {
-  font-size: .65rem; font-weight: 700; text-transform: uppercase;
-  letter-spacing: .1em; color: var(--acc); margin-bottom: 14px; padding-bottom: 10px;
-  border-bottom: 1px solid var(--ln);
-}
 .param-box {
   background: var(--c2); border: 1px solid var(--ln); border-radius: 12px;
   padding: 12px 14px; margin-top: 10px; font-size: .78rem;
@@ -277,6 +268,22 @@ hr { border-color: var(--ln) !important; margin: .75rem 0 !important; }
 }
 
 /* ══════════════════════════════
+   SETTINGS STRIP
+══════════════════════════════ */
+.settings-strip {
+  background: var(--c1); border: 1px solid var(--ln);
+  border-radius: 16px; padding: 16px 20px; margin-bottom: 16px;
+}
+.dur-badge {
+  background: rgba(108,99,255,.12); border: 1px solid rgba(108,99,255,.25);
+  border-radius: 12px; padding: 10px 16px; text-align: center;
+  height: 100%; display: flex; flex-direction: column; justify-content: center;
+}
+.dur-days { font-size: 1.1rem; font-weight: 800; color: #fff; }
+.dur-hor  { font-size: .72rem; color: var(--t2); margin-top: 3px; }
+.dur-warn { font-size: .7rem; color: var(--bear); margin-top: 3px; }
+
+/* ══════════════════════════════
    MOBILE
 ══════════════════════════════ */
 @media (max-width: 640px) {
@@ -300,7 +307,7 @@ hr { border-color: var(--ln) !important; margin: .75rem 0 !important; }
 # ════════════════════════════════════════════════════
 
 IDX_UNIVERSE = {
-    "BBCA": "Bank BCA",          "BBRI": "Bank BRI",
+    "BBCA": "Bank BCA",         "BBRI": "Bank BRI",
     "BMRI": "Bank Mandiri",      "BBNI": "Bank BNI",
     "BBTN": "Bank BTN",          "BRIS": "Bank Syariah Indonesia",
     "TLKM": "Telkom",            "ASII": "Astra Intl",
@@ -325,6 +332,22 @@ IDX_UNIVERSE = {
     "MIKA": "Mitra Keluarga",    "TKIM": "Tjiwi Kimia",
     "INKP": "Indah Kiat",        "SIDO": "Sido Muncul",
     "ESSA": "Emas Mineral",      "ENRG": "Energi Mega",
+}
+
+CRYPTO_UNIVERSE = {
+    "BTC-USD":  "Bitcoin",          "ETH-USD":  "Ethereum",
+    "BNB-USD":  "BNB",              "SOL-USD":  "Solana",
+    "XRP-USD":  "XRP",              "ADA-USD":  "Cardano",
+    "AVAX-USD": "Avalanche",        "DOGE-USD": "Dogecoin",
+    "DOT-USD":  "Polkadot",         "LINK-USD": "Chainlink",
+    "MATIC-USD":"Polygon",          "UNI-USD":  "Uniswap",
+    "LTC-USD":  "Litecoin",         "BCH-USD":  "Bitcoin Cash",
+    "ATOM-USD": "Cosmos",           "NEAR-USD": "NEAR Protocol",
+    "APT-USD":  "Aptos",            "ARB-USD":  "Arbitrum",
+    "OP-USD":   "Optimism",         "SUI-USD":  "Sui",
+    "INJ-USD":  "Injective",        "FIL-USD":  "Filecoin",
+    "ICP-USD":  "Internet Computer","PEPE-USD": "Pepe",
+    "WIF-USD":  "dogwifhat",        "TON-USD":  "Toncoin",
 }
 
 HORIZONS = {
@@ -437,20 +460,88 @@ def score_and_check(df: pd.DataFrame):
     return score, checks
 
 
-def calc_levels(entry: float, atr: float, h: dict):
-    tp1 = entry + atr * h["atr_tp"][0]
-    tp2 = entry + atr * h["atr_tp"][1]
-    tp3 = entry + atr * h["atr_tp"][2]
-    sl  = entry - atr * h["atr_sl"]
-    rr  = (tp2 - entry) / (entry - sl) if entry > sl else 0
-    return tp1, tp2, tp3, sl, rr
+def find_key_levels(df: pd.DataFrame, entry: float, atr: float, h: dict, cur: str = "IDR"):
+    """
+    TP dari swing high nyata (resistance sebelumnya).
+    SL dari swing low nyata (support terdekat).
+    Fallback ke ATR kalau tidak ada level yang cocok.
+    """
+    # Rounding: IDR = integer, USD = pertahankan desimal
+    def _rnd(n: float) -> float:
+        return float(round(n)) if cur == "IDR" else n
+
+    sw = 4
+    n  = len(df)
+    lookback = {"3mo": 50, "6mo": 80, "1y": 130, "2y": 200}.get(h["period"], 60)
+    start = max(sw, n - lookback)
+
+    tp_min = max(entry * 0.003, atr * 0.4)
+    tp_max = atr * h["atr_tp"][2] * 1.4
+
+    # ── Cari resistance (swing high di atas entry) ──
+    raw_res = []
+    h_arr = df["High"].values
+    for i in range(start, n - sw):
+        val = h_arr[i]
+        if val == h_arr[max(0, i - sw):i + sw + 1].max():
+            if entry + tp_min < val <= entry + tp_max:
+                raw_res.append(float(val))
+
+    tps = []
+    if raw_res:
+        raw_res.sort()
+        i = 0
+        while i < len(raw_res) and len(tps) < 3:
+            grp = [raw_res[i]]
+            j = i + 1
+            while j < len(raw_res) and (raw_res[j] - grp[0]) / grp[0] < 0.01:
+                grp.append(raw_res[j])
+                j += 1
+            lvl = _rnd(sum(grp) / len(grp))
+            if not tps or (lvl - tps[-1]) / tps[-1] > 0.006:
+                tps.append(lvl)
+            i = j
+
+    if not tps:
+        tps = [
+            _rnd(entry + atr * h["atr_tp"][0]),
+            _rnd(entry + atr * h["atr_tp"][1]),
+            _rnd(entry + atr * h["atr_tp"][2]),
+        ]
+
+    # ── Cari support (swing low di bawah entry) ──
+    sl_default = _rnd(entry - atr * h["atr_sl"])
+    l_arr = df["Low"].values
+    sl_min_dist = max(entry * 0.005, atr * 0.3)
+    sl_max_dist = atr * h["atr_sl"] * 2.2
+
+    raw_sup = []
+    for i in range(start, n - sw):
+        val = l_arr[i]
+        if val == l_arr[max(0, i - sw):i + sw + 1].min():
+            dist = entry - val
+            if sl_min_dist <= dist <= sl_max_dist:
+                raw_sup.append(float(val))
+
+    sl = _rnd(max(raw_sup)) if raw_sup else sl_default
+
+    rr_tp = tps[1] if len(tps) >= 2 else tps[0]
+    rr = (rr_tp - entry) / (entry - sl) if entry > sl else 0
+
+    return tps, sl, rr
 
 
 # ════════════════════════════════════════════════════
 # FORMATTING HELPERS
 # ════════════════════════════════════════════════════
 
-def rp(n: float) -> str:
+def rp(n: float, cur: str = "IDR") -> str:
+    if cur == "USD":
+        if n >= 10000: return f"${n:,.0f}"
+        if n >= 100:   return f"${n:,.1f}"
+        if n >= 1:     return f"${n:,.3f}"
+        if n >= 0.01:  return f"${n:.5f}"
+        return f"${n:.7f}"
     return f"{int(round(n)):,}".replace(",", ".")
 
 def pct(new: float, base: float) -> str:
@@ -474,11 +565,32 @@ DOT = {"bullish": "🟢", "bearish": "🔴", "neutral": "🟡"}
 # HTML COMPONENTS
 # ════════════════════════════════════════════════════
 
+_TP_CLS  = ["lv-1", "lv-2", "lv-3"]
+_TP_COLORS = ["#3ad6a6", "#f4b740", "#b47ef4"]
+_RR_LABEL  = {1: "TP1/SL", 2: "TP2/SL", 3: "TP2/SL"}
+
+def _tp_cells(tps: list, entry: float, cur: str = "IDR") -> str:
+    n = len(tps)
+    cells = ""
+    for i, tp in enumerate(tps):
+        cells += f"""
+    <div class="lv {_TP_CLS[i]}">
+      <span class="ll">TP {i + 1}</span>
+      <span class="lval">{rp(tp, cur)}</span>
+      <span class="lpct pos">{pct(tp, entry)}</span>
+    </div>"""
+    return f'<div style="display:grid;grid-template-columns:repeat({n},1fr);gap:7px;margin-top:7px;">{cells}</div>'
+
+
 def html_cards(rows: list) -> str:
     cards = ['<div class="stock-grid">']
     for r in rows:
         lbl, bcls = tier(r["_score"])
-        e = r["_entry"]
+        e    = r["_entry"]
+        tps  = r["_tps"]
+        n_tp = len(tps)
+        cur  = r.get("_cur", "IDR")
+        rr_lbl = _RR_LABEL.get(n_tp, "TP/SL")
         cards.append(f"""
 <div class="sc">
   <div class="sc-top">
@@ -491,35 +603,21 @@ def html_cards(rows: list) -> str:
   <div class="lvg">
     <div class="lv lv-e">
       <span class="ll">Entry</span>
-      <span class="lval">{rp(e)}</span>
+      <span class="lval">{rp(e, cur)}</span>
       <span class="lpct" style="color:var(--t3)">±0%</span>
     </div>
     <div class="lv lv-sl">
       <span class="ll">Stop Loss</span>
-      <span class="lval">{rp(r["_sl"])}</span>
+      <span class="lval">{rp(r["_sl"], cur)}</span>
       <span class="lpct neg">{pct(r["_sl"], e)}</span>
     </div>
     <div class="lv lv-rr">
       <span class="ll">R:R</span>
       <span class="lval">{r["_rr"]:.1f}×</span>
-      <span class="lpct" style="color:var(--t3)">TP2/SL</span>
-    </div>
-    <div class="lv lv-1">
-      <span class="ll">TP 1</span>
-      <span class="lval">{rp(r["_tp1"])}</span>
-      <span class="lpct pos">{pct(r["_tp1"], e)}</span>
-    </div>
-    <div class="lv lv-2">
-      <span class="ll">TP 2</span>
-      <span class="lval">{rp(r["_tp2"])}</span>
-      <span class="lpct pos">{pct(r["_tp2"], e)}</span>
-    </div>
-    <div class="lv lv-3">
-      <span class="ll">TP 3</span>
-      <span class="lval">{rp(r["_tp3"])}</span>
-      <span class="lpct pos">{pct(r["_tp3"], e)}</span>
+      <span class="lpct" style="color:var(--t3)">{rr_lbl}</span>
     </div>
   </div>
+  {_tp_cells(tps, e, cur)}
 </div>""")
     cards.append("</div>")
     return "\n".join(cards)
@@ -539,34 +637,30 @@ def html_stats(rows: list) -> str:
 </div>"""
 
 
-def html_level_strip(entry, sl, tp1, tp2, tp3) -> str:
+_LS_CLS = ["ls-1", "ls-2", "ls-3"]
+
+def html_level_strip(entry: float, sl: float, tps: list, cur: str = "IDR") -> str:
+    tp_items = ""
+    for i, tp in enumerate(tps):
+        tp_items += f"""
+  <div class="ls {_LS_CLS[i]}">
+    <div class="ls-lbl">TP {i + 1}</div>
+    <span class="ls-val">{rp(tp, cur)}</span>
+    <span class="ls-pct pos">{pct(tp, entry)}</span>
+  </div>"""
     return f"""
 <div class="lvl-strip">
   <div class="ls ls-e">
     <div class="ls-lbl">Entry</div>
-    <span class="ls-val">{rp(entry)}</span>
+    <span class="ls-val">{rp(entry, cur)}</span>
     <span class="ls-pct" style="color:var(--t3)">±0%</span>
   </div>
   <div class="ls ls-sl">
     <div class="ls-lbl">Stop Loss</div>
-    <span class="ls-val">{rp(sl)}</span>
+    <span class="ls-val">{rp(sl, cur)}</span>
     <span class="ls-pct neg">{pct(sl, entry)}</span>
   </div>
-  <div class="ls ls-1">
-    <div class="ls-lbl">TP 1</div>
-    <span class="ls-val">{rp(tp1)}</span>
-    <span class="ls-pct pos">{pct(tp1, entry)}</span>
-  </div>
-  <div class="ls ls-2">
-    <div class="ls-lbl">TP 2</div>
-    <span class="ls-val">{rp(tp2)}</span>
-    <span class="ls-pct pos">{pct(tp2, entry)}</span>
-  </div>
-  <div class="ls ls-3">
-    <div class="ls-lbl">TP 3</div>
-    <span class="ls-val">{rp(tp3)}</span>
-    <span class="ls-pct pos">{pct(tp3, entry)}</span>
-  </div>
+  {tp_items}
 </div>"""
 
 
@@ -587,7 +681,7 @@ def html_signals(checks: list) -> str:
 # CHART
 # ════════════════════════════════════════════════════
 
-def make_chart(df: pd.DataFrame, label: str, levels: dict = None):
+def make_chart(df: pd.DataFrame, label: str, levels: dict = None, cur: str = "IDR"):
     fig = make_subplots(
         rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.04,
         row_heights=[0.55, 0.22, 0.23],
@@ -616,7 +710,7 @@ def make_chart(df: pd.DataFrame, label: str, levels: dict = None):
             color, dash, lbl = LEVEL_STYLE[key]
             fig.add_hline(
                 y=val, line_color=color, line_dash=dash, line_width=1.2,
-                annotation_text=f" {lbl}  {rp(val)}",
+                annotation_text=f" {lbl}  {rp(val, cur)}",
                 annotation_position="top left",
                 annotation_font_color=color,
                 annotation_font_size=11,
@@ -670,73 +764,105 @@ def make_chart(df: pd.DataFrame, label: str, levels: dict = None):
 st.markdown("""
 <div class="app-hdr">
   <h1>📈 Sinyal Teknikal</h1>
-  <p>Scanner swing trading IDX · Entry / TP1 / TP2 / TP3 / SL berbasis ATR ·
-     Beli sore jual pagi hingga 1 bulan · ⚠️ Bukan rekomendasi investasi</p>
+  <p>Scanner swing trading · Saham IDX & Crypto · Entry / TP1 / TP2 / TP3 / SL dari level nyata ·
+     Overnight hingga 1 bulan · ⚠️ Bukan rekomendasi investasi</p>
 </div>
 """, unsafe_allow_html=True)
 
-# ── Sidebar ─────────────────────────────────────────
-with st.sidebar:
-    st.markdown('<div class="sidebar-hdr">⚙️ Pengaturan</div>', unsafe_allow_html=True)
+# ── Helper tanggal ─────────────────────────────────
+_HARI  = ["Sen","Sel","Rab","Kam","Jum","Sab","Min"]
+_BULAN = ["Jan","Feb","Mar","Apr","Mei","Jun","Jul","Agu","Sep","Okt","Nov","Des"]
 
-    horizon_name = st.selectbox(
-        "Horizon Trading",
-        list(HORIZONS.keys()),
-        help="Pilih durasi hold. Overnight = beli sore jual pagi besok.",
-    )
-    h_params = HORIZONS[horizon_name]
+def fmt_tgl(d: dt.date) -> str:
+    return f"{_HARI[d.weekday()]}, {d.day} {_BULAN[d.month-1]} {d.year}"
 
-    min_score = st.slider(
-        "Skor sinyal minimum", 0, 6, 2,
-        help="0 = semua · 2 = moderat ke atas · 4 = kuat saja",
-    )
+def days_to_horizon(days: int) -> str:
+    if days <= 1:   return "Overnight (1 Hari)"
+    if days <= 4:   return "2–3 Hari"
+    if days <= 9:   return "1 Minggu"
+    if days <= 20:  return "2 Minggu"
+    return "1 Bulan"
 
-    st.markdown(f"""
-<div class="param-box">
-  <div class="row"><span class="lbl">Period data</span><span class="val">{h_params['period']}</span></div>
-  <div class="row"><span class="lbl">SL × ATR</span><span class="val">×{h_params['atr_sl']}</span></div>
-  <div class="row"><span class="lbl">TP1 × ATR</span><span class="val">×{h_params['atr_tp'][0]}</span></div>
-  <div class="row"><span class="lbl">TP2 × ATR</span><span class="val">×{h_params['atr_tp'][1]}</span></div>
-  <div class="row"><span class="lbl">TP3 × ATR</span><span class="val">×{h_params['atr_tp'][2]}</span></div>
-</div>
-""", unsafe_allow_html=True)
 
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.caption(
-        "Level dihitung dari ATR-14 (Average True Range). "
-        "Makin panjang horizon → TP/SL makin lebar mengikuti volatilitas saham."
-    )
+# ── Settings (main area) ────────────────────────────
+today     = dt.date.today()
+tomorrow  = today + dt.timedelta(days=1)
+
+with st.container():
+    st.markdown('<div class="settings-strip">', unsafe_allow_html=True)
+    c1, c2, c3, c4 = st.columns([2, 2, 2, 3])
+    with c1:
+        buy_date  = st.date_input("🛒 Beli sore",  value=today,    format="DD/MM/YYYY")
+    with c2:
+        sell_date = st.date_input("💰 Jual pagi",  value=tomorrow, format="DD/MM/YYYY")
+    with c3:
+        days_diff = (sell_date - buy_date).days
+        if days_diff <= 0:
+            days_diff = 1
+            warn_html = '<div class="dur-warn">⚠ Jual harus setelah beli</div>'
+        else:
+            warn_html = ""
+        horizon_name = days_to_horizon(days_diff)
+        st.markdown(
+            f'<div class="dur-badge"><div class="dur-days">{days_diff} hari</div>'
+            f'<div class="dur-hor">{horizon_name}</div>{warn_html}</div>',
+            unsafe_allow_html=True,
+        )
+    with c4:
+        min_score = st.slider(
+            "Skor sinyal minimum", 0, 6, 2,
+            help="0 = semua · 2 = moderat ke atas · 4 = kuat saja",
+        )
+    st.markdown("</div>", unsafe_allow_html=True)
+
+h_params = HORIZONS[horizon_name]
 
 
 # ── Tabs ────────────────────────────────────────────
-tab_scan, tab_detail = st.tabs(["🔍  Scanner Saham IDX", "📊  Analisa Detail"])
+tab_scan, tab_detail = st.tabs(["🔍  Scanner", "📊  Analisa Detail"])
 
 
 # ════════════════════════════════════════════════════
 # TAB 1: SCANNER
 # ════════════════════════════════════════════════════
 with tab_scan:
+    # ── Pilih aset ──────────────────────────────────
+    asset_type = st.radio(
+        "Aset",
+        ["📊 Saham IDX", "₿ Crypto"],
+        horizontal=True,
+        label_visibility="collapsed",
+    )
+    is_crypto  = asset_type.startswith("₿")
+    universe   = CRYPTO_UNIVERSE if is_crypto else IDX_UNIVERSE
+    scan_cur   = "USD" if is_crypto else "IDR"
+    entry_lbl  = "Entry" if is_crypto else "Entry (Rp)"
+
     col_btn, col_txt = st.columns([1, 3])
     with col_btn:
         do_scan = st.button("🔄  Scan Sekarang", type="primary")
     with col_txt:
         st.caption(
-            f"Memindai **{len(IDX_UNIVERSE)} saham IDX**. "
-            "Pertama kali ±1–2 menit (unduh data). Berikutnya dari cache 10 menit."
+            f"Memindai **{len(universe)} {'koin crypto' if is_crypto else 'saham IDX'}**. "
+            "Pertama kali ±1–2 menit. Berikutnya dari cache 10 menit."
         )
 
     if do_scan:
+        # Hapus hasil scan sebelumnya agar tidak campur IDX & crypto
+        st.session_state.pop("scan_rows", None)
+
         rows = []
         bar  = st.progress(0, text="Memulai scan…")
-        tickers = list(IDX_UNIVERSE.keys())
+        codes = list(universe.keys())
 
-        for i, code in enumerate(tickers):
+        for i, code in enumerate(codes):
             bar.progress(
-                (i + 1) / len(tickers),
-                text=f"Menganalisa {code}… ({i+1}/{len(tickers)})",
+                (i + 1) / len(codes),
+                text=f"Menganalisa {code}… ({i+1}/{len(codes)})",
             )
             try:
-                df = load_data(f"{code}.JK", h_params["period"])
+                yf_ticker = code if is_crypto else f"{code}.JK"
+                df = load_data(yf_ticker, h_params["period"])
                 if len(df) < 55:
                     continue
                 df = add_indicators(df)
@@ -747,22 +873,25 @@ with tab_scan:
                 last  = df.iloc[-1]
                 entry = float(last["Close"])
                 atr   = float(last["ATR"])
-                tp1, tp2, tp3, sl, rr = calc_levels(entry, atr, h_params)
+                tps, sl, rr = find_key_levels(df, entry, atr, h_params, scan_cur)
+
+                tp_export = {
+                    f"TP{j+1}": f"{rp(tp, scan_cur)} ({pct(tp, entry)})"
+                    for j, tp in enumerate(tps)
+                }
 
                 rows.append(dict(
-                    Kode=code, Nama=IDX_UNIVERSE[code],
+                    Kode=code, Nama=universe[code],
                     _score=score, _entry=entry,
-                    _sl=sl, _tp1=tp1, _tp2=tp2, _tp3=tp3, _rr=rr,
-                    _checks=checks,
-                    # flat export cols
+                    _sl=sl, _tps=tps, _rr=rr,
+                    _checks=checks, _cur=scan_cur,
+                    _yf_ticker=yf_ticker,
                     Signal=tier(score)[0],
                     Skor=score,
                     **{
-                        "Entry (Rp)": rp(entry),
-                        "SL":  f"{rp(sl)} ({pct(sl, entry)})",
-                        "TP1": f"{rp(tp1)} ({pct(tp1, entry)})",
-                        "TP2": f"{rp(tp2)} ({pct(tp2, entry)})",
-                        "TP3": f"{rp(tp3)} ({pct(tp3, entry)})",
+                        entry_lbl: rp(entry, scan_cur),
+                        "SL": f"{rp(sl, scan_cur)} ({pct(sl, entry)})",
+                        **tp_export,
                         "R:R": f"{rr:.1f}×",
                     },
                 ))
@@ -772,12 +901,12 @@ with tab_scan:
         bar.empty()
 
         if not rows:
-            st.warning("Tidak ada saham memenuhi filter. Coba turunkan skor minimum.")
+            st.warning("Tidak ada yang memenuhi filter. Coba turunkan skor minimum.")
         else:
             st.session_state["scan_rows"] = sorted(
                 rows, key=lambda r: r["_score"], reverse=True
             )
-            st.success(f"✅ Ditemukan **{len(rows)}** saham, diurutkan dari sinyal terkuat.")
+            st.success(f"✅ Ditemukan **{len(rows)}** aset, diurutkan dari sinyal terkuat.")
 
     # ── Hasil scan ──────────────────────────────────
     if st.session_state.get("scan_rows"):
@@ -788,56 +917,62 @@ with tab_scan:
 
         st.markdown("<br>", unsafe_allow_html=True)
 
-        # Download
-        export_cols = ["Signal", "Skor", "Kode", "Nama",
-                       "Entry (Rp)", "SL", "TP1", "TP2", "TP3", "R:R"]
-        csv = pd.DataFrame(rows)[export_cols].to_csv(index=False)
+        # Download CSV
+        all_keys = set()
+        for r in rows:
+            all_keys.update(r.keys())
+        export_base = ["Signal", "Skor", "Kode", "Nama"]
+        cur_rows    = rows[0].get("_cur", "IDR")
+        e_lbl       = "Entry" if cur_rows == "USD" else "Entry (Rp)"
+        export_tp   = [f"TP{i+1}" for i in range(3) if f"TP{i+1}" in all_keys]
+        export_cols = export_base + [e_lbl, "SL"] + export_tp + ["R:R"]
+        export_cols = [c for c in export_cols if c in all_keys]
+        csv  = pd.DataFrame(rows)[export_cols].to_csv(index=False)
         fname = horizon_name.split("(")[0].strip().replace(" ", "_").replace("–", "-")
-        st.download_button("⬇️  Download hasil sebagai CSV", csv,
+        st.download_button("⬇️  Download CSV", csv,
                            file_name=f"scan_{fname}.csv", mime="text/csv")
 
-        # ── Detail per saham ────────────────────────
-        st.markdown('<div class="sec-lbl">Detail Saham</div>', unsafe_allow_html=True)
+        # ── Detail per aset ─────────────────────────
+        st.markdown('<div class="sec-lbl">Detail Aset</div>', unsafe_allow_html=True)
 
-        sel_code = st.selectbox(
-            "Pilih saham untuk chart & breakdown sinyal",
+        all_names = {r["Kode"]: r["Nama"] for r in rows}
+        sel_code  = st.selectbox(
+            "Pilih untuk lihat chart & breakdown sinyal",
             [r["Kode"] for r in rows],
-            format_func=lambda c: f"{c}  —  {IDX_UNIVERSE.get(c, c)}",
+            format_func=lambda c: f"{c}  —  {all_names.get(c, c)}",
         )
-        sel = next(r for r in rows if r["Kode"] == sel_code)
+        sel     = next(r for r in rows if r["Kode"] == sel_code)
+        sel_cur = sel.get("_cur", "IDR")
+        tps_sel = sel["_tps"]
+        rr_tp_idx = min(1, len(tps_sel) - 1)
 
-        # Metrics row
-        m1, m2, m3, m4, m5 = st.columns(5)
-        lbl, _  = tier(sel["_score"])
-        m1.metric("Signal",  lbl,                    f"Skor {sel['_score']}")
-        m2.metric("Entry",   f"Rp {rp(sel['_entry'])}")
-        m3.metric("SL",      f"Rp {rp(sel['_sl'])}",  pct(sel["_sl"],  sel["_entry"]))
-        m4.metric("TP2",     f"Rp {rp(sel['_tp2'])}", pct(sel["_tp2"], sel["_entry"]))
-        m5.metric("R:R",     f"{sel['_rr']:.1f}×",    "TP2 / SL")
+        # Metrics
+        lbl, _ = tier(sel["_score"])
+        mcols  = st.columns(3 + len(tps_sel) + 1)
+        mcols[0].metric("Signal", lbl, f"Skor {sel['_score']}")
+        mcols[1].metric("Entry",  rp(sel["_entry"], sel_cur))
+        mcols[2].metric("SL",     rp(sel["_sl"], sel_cur), pct(sel["_sl"], sel["_entry"]))
+        for i, tp in enumerate(tps_sel):
+            mcols[3 + i].metric(f"TP {i+1}", rp(tp, sel_cur), pct(tp, sel["_entry"]))
+        mcols[-1].metric("R:R", f"{sel['_rr']:.1f}×", f"TP{rr_tp_idx+1}/SL")
 
-        # Level strip
         st.markdown(
-            html_level_strip(
-                sel["_entry"], sel["_sl"],
-                sel["_tp1"], sel["_tp2"], sel["_tp3"]
-            ),
+            html_level_strip(sel["_entry"], sel["_sl"], tps_sel, sel_cur),
             unsafe_allow_html=True,
         )
 
-        # Signal breakdown
         st.markdown('<div class="sec-lbl">Breakdown Sinyal</div>', unsafe_allow_html=True)
         st.markdown(html_signals(sel["_checks"]), unsafe_allow_html=True)
 
-        # Chart
         st.markdown('<div class="sec-lbl">Chart</div>', unsafe_allow_html=True)
         try:
-            df_sel = load_data(f"{sel_code}.JK", h_params["period"])
+            df_sel = load_data(sel["_yf_ticker"], h_params["period"])
             df_sel = add_indicators(df_sel)
+            levels_sel = {"entry": sel["_entry"], "sl": sel["_sl"]}
+            for i, tp in enumerate(sel["_tps"], 1):
+                levels_sel[f"tp{i}"] = tp
             st.plotly_chart(
-                make_chart(df_sel, sel_code, dict(
-                    entry=sel["_entry"], sl=sel["_sl"],
-                    tp1=sel["_tp1"], tp2=sel["_tp2"], tp3=sel["_tp3"],
-                )),
+                make_chart(df_sel, sel_code, levels_sel, sel_cur),
                 use_container_width=True,
             )
         except Exception as e:
@@ -862,8 +997,12 @@ with tab_detail:
             )
             ticker = f"{pick}.JK"
         elif mode == "Crypto":
-            pick   = st.selectbox("Koin", ["BTC", "ETH", "SOL", "BNB", "XRP", "DOGE"])
-            ticker = f"{pick}-USD"
+            pick   = st.selectbox(
+                "Koin",
+                list(CRYPTO_UNIVERSE.keys()),
+                format_func=lambda k: f"{k.replace('-USD','')}  —  {CRYPTO_UNIVERSE[k]}",
+            )
+            ticker = pick
         else:
             ticker = st.text_input("Ticker Yahoo Finance", "BBCA.JK").strip().upper()
 
@@ -887,25 +1026,32 @@ with tab_detail:
     entry = float(last["Close"])
     chg   = (entry - float(prev["Close"])) / float(prev["Close"]) * 100
     atr   = float(last["ATR"])
-    tp1, tp2, tp3, sl, rr = calc_levels(entry, atr, h_params)
+    det_cur = "USD" if ticker.endswith("-USD") else "IDR"
+    tps, sl, rr = find_key_levels(df, entry, atr, h_params, det_cur)
     lbl, _ = tier(score)
 
-    # Metrics
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Harga Terakhir", f"Rp {rp(entry)}", f"{chg:+.2f}%")
-    c2.metric("Signal",         lbl,                 f"Skor {score}")
-    c3.metric("RSI-14",         f"{last['RSI']:.0f}")
-    c4.metric("R:R (TP2/SL)",   f"{rr:.1f}×")
+    # Metrics — baris dinamis
+    rr_tp_idx = min(1, len(tps) - 1)
+    dcols = st.columns(3 + len(tps) + 1)
+    dcols[0].metric("Harga Terakhir", rp(entry, det_cur), f"{chg:+.2f}%")
+    dcols[1].metric("Signal",         lbl,                 f"Skor {score}")
+    dcols[2].metric("RSI-14",         f"{last['RSI']:.0f}")
+    for i, tp in enumerate(tps):
+        dcols[3 + i].metric(f"TP {i+1}", rp(tp, det_cur), pct(tp, entry))
+    dcols[-1].metric("R:R", f"{rr:.1f}×", f"TP{rr_tp_idx+1}/SL")
 
-    # Horizon label
-    st.caption(f"**Horizon aktif:** {horizon_name}")
+    st.caption(
+        f"**Beli:** {fmt_tgl(buy_date)}  →  **Jual:** {fmt_tgl(sell_date)}  "
+        f"·  {days_diff} hari  ·  Horizon: **{horizon_name}**"
+    )
 
-    # Level strip
-    st.markdown(html_level_strip(entry, sl, tp1, tp2, tp3), unsafe_allow_html=True)
+    st.markdown(html_level_strip(entry, sl, tps, det_cur), unsafe_allow_html=True)
 
-    # Chart
+    levels_detail = {"entry": entry, "sl": sl}
+    for i, tp in enumerate(tps, 1):
+        levels_detail[f"tp{i}"] = tp
     st.plotly_chart(
-        make_chart(df, ticker, dict(entry=entry, sl=sl, tp1=tp1, tp2=tp2, tp3=tp3)),
+        make_chart(df, ticker, levels_detail, det_cur),
         use_container_width=True,
     )
 
@@ -915,10 +1061,10 @@ with tab_detail:
 
     # Info
     st.info(
-        f"**Entry** = harga penutupan terakhir (aproksimasi harga beli sore hari). "
-        f"**Level** dihitung dari ATR-14 × faktor horizon: "
-        f"SL ×{h_params['atr_sl']} · TP1 ×{h_params['atr_tp'][0]} · "
-        f"TP2 ×{h_params['atr_tp'][1]} · TP3 ×{h_params['atr_tp'][2]}. "
-        f"ATR adaptif — masing-masing saham punya lebar TP/SL berbeda sesuai volatilitas.",
+        f"**Entry** = harga penutupan terakhir (aproksimasi harga beli sore). "
+        f"**TP** diambil dari swing high nyata (resistance sebelumnya di chart). "
+        f"**SL** dari swing low terdekat di bawah entry. "
+        f"Jika tidak ada swing yang cocok dalam range, fallback ke ATR-14 × faktor horizon. "
+        f"Jumlah TP bisa 1–3 tergantung berapa level resistance yang ditemukan.",
         icon="ℹ️",
     )
