@@ -54,10 +54,12 @@ st.markdown("""
 /* ── Page ── */
 .stApp, .stAppHeader { background: var(--bg) !important }
 .main .block-container {
-  padding: 1rem 1rem 3rem !important;
+  padding: 0 1rem 3rem !important;
   max-width: 1440px !important;
   font-family: 'Inter', system-ui, sans-serif;
 }
+section[data-testid="stSidebar"] + div { padding-top: 0 !important; }
+.stAppHeader, [data-testid="stAppHeader"] { display: none !important; min-height: 0 !important; }
 
 /* ── App header ── */
 .app-hdr {
@@ -286,6 +288,25 @@ hr { border-color: var(--ln) !important; margin: .75rem 0 !important; }
 .dur-days { font-size: 1.1rem; font-weight: 800; color: #fff; }
 .dur-hor  { font-size: .72rem; color: var(--t2); margin-top: 3px; }
 .dur-warn { font-size: .7rem; color: var(--bear); margin-top: 3px; }
+
+/* ══════════════════════════════
+   FOOTER
+══════════════════════════════ */
+.app-footer {
+  margin-top: 40px;
+  padding: 20px 0 10px;
+  border-top: 1px solid var(--ln);
+  text-align: center;
+  color: var(--t2);
+  font-size: .78rem;
+}
+.app-footer a {
+  color: var(--acc);
+  text-decoration: none;
+  font-weight: 500;
+}
+.app-footer a:hover { color: #8b85ff; text-decoration: underline; }
+.app-footer .creator { font-weight: 600; color: var(--t1); }
 
 /* ══════════════════════════════
    MOBILE
@@ -1142,3 +1163,13 @@ with tab_detail:
         f"Jumlah TP bisa 1–3 tergantung berapa level resistance yang ditemukan.",
         icon="ℹ️",
     )
+
+# ════════════════════════════════════════════════════
+# FOOTER
+# ════════════════════════════════════════════════════
+st.markdown("""
+<div class="app-footer">
+  Created by <span class="creator"><a href="https://muhamadakbarfadilah.my.id/" target="_blank">Akbar Fadilah</a></span>
+  &nbsp;·&nbsp; Founder &amp; Co-Founder at <a href="https://afdatech.com/" target="_blank">Afda Technology Solutions</a>
+</div>
+""", unsafe_allow_html=True)
