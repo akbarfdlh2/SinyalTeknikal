@@ -468,6 +468,8 @@ INDODAX_FALLBACK_PRICE_STEPS = {
     "PEPEIDR": 0.000001,
 }
 
+INDODAX_SCAN_DELAY_SECONDS = 0.4
+
 HORIZONS = {
     "Overnight (1 Hari)": dict(atr_tp=[0.8, 1.5, 2.2], atr_sl=0.6, period="3mo"),
     "2–3 Hari":           dict(atr_tp=[1.2, 2.2, 3.2], atr_sl=0.9, period="6mo"),
@@ -1186,7 +1188,12 @@ with tab_scan:
     with col_txt:
         st.caption(
             f"Memindai **{len(universe)} {scan_label}**. "
-            "Pertama kali ±1–2 menit. Berikutnya dari cache 10 menit."
+            "Pertama kali ±1–2 menit. Berikutnya dari cache 10 menit. "
+            + (
+                "Request Indodax diberi jeda agar aman terhadap rate limit."
+                if scan_source == "indodax"
+                else ""
+            )
         )
 
     if do_scan:
@@ -1197,6 +1204,8 @@ with tab_scan:
         codes = list(universe.keys())
 
         for i, code in enumerate(codes):
+            if scan_source == "indodax" and i > 0:
+                time.sleep(INDODAX_SCAN_DELAY_SECONDS)
             bar.progress(
                 (i + 1) / len(codes),
                 text=f"Menganalisa {code}… ({i+1}/{len(codes)})",

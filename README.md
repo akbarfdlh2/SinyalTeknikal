@@ -20,6 +20,7 @@ Scanner swing trading **Saham IDX & Crypto** berbasis analisis teknikal — diba
 - **Analisa Detail** — dukung saham IDX, crypto USD, pasangan IDR Indodax, maupun ticker Yahoo Finance kustom
 - **Export CSV** — unduh hasil scan sebagai file CSV
 - **Copy Kode & Info Aset** — salin kode saja atau informasi trading lengkap langsung dari kartu hasil scanner
+- **Indodax Public API** — daftar pair dari `/api/pairs`, ranking volume dari `/api/summaries`, serta caching dan jeda scan untuk menjaga rate limit
 
 ---
 
