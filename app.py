@@ -280,7 +280,7 @@ hr { border-color: var(--ln) !important; margin: .75rem 0 !important; }
 .dur-badge {
   background: rgba(108,99,255,.12); border: 1px solid rgba(108,99,255,.25);
   border-radius: 12px; padding: 10px 16px; text-align: center;
-  height: 100%; display: flex; flex-direction: column; justify-content: center;
+  min-height: 58px; display: flex; flex-direction: column; justify-content: center;
 }
 .dur-days { font-size: 1.1rem; font-weight: 800; color: #fff; }
 .dur-hor  { font-size: .72rem; color: var(--t2); margin-top: 3px; }
@@ -290,16 +290,48 @@ hr { border-color: var(--ln) !important; margin: .75rem 0 !important; }
    MOBILE
 ══════════════════════════════ */
 @media (max-width: 640px) {
-  .main .block-container { padding: .6rem .6rem 2rem !important; }
-  .app-hdr { padding: 16px 18px; border-radius: 16px; }
+  .main .block-container { padding: .5rem .5rem 2.5rem !important; }
+  .app-hdr { padding: 14px 16px; border-radius: 14px; }
+  .app-hdr p { font-size: .74rem; }
   .stock-grid { grid-template-columns: 1fr; }
   .lvg { grid-template-columns: repeat(2,1fr); }
-  .lvl-strip { gap: 5px; }
-  .ls { padding: 10px 7px; min-width: 56px; }
+  .lvl-strip { gap: 5px; flex-wrap: wrap; }
+  .ls { padding: 10px 7px; min-width: 62px; flex: 1 1 62px; }
   .ls-val { font-size: .82rem; }
-  .stats-bar { gap: 6px; }
+  .stats-bar { gap: 6px; flex-wrap: wrap; }
   .chip { font-size: .7rem; padding: 5px 10px; }
-  [data-testid="stMetricValue"] > div { font-size: 1rem !important; }
+  .settings-strip { padding: 12px 14px; }
+  .dur-badge { padding: 8px 12px; min-height: unset; }
+
+  /* Metric cards: smaller */
+  [data-testid="stMetricValue"] > div { font-size: .92rem !important; }
+  [data-testid="stMetricLabel"] > div { font-size: .58rem !important; }
+  [data-testid="metric-container"] { padding: 10px 10px !important; }
+
+  /* Force Streamlit columns to wrap 2-per-row */
+  [data-testid="stHorizontalBlock"] {
+    flex-wrap: wrap !important;
+    gap: 0.4rem !important;
+  }
+  [data-testid="stColumn"] {
+    min-width: calc(50% - 0.2rem) !important;
+    flex: 1 1 calc(50% - 0.2rem) !important;
+    box-sizing: border-box !important;
+  }
+
+  /* Tabs: scrollable, no wrap */
+  .stTabs [data-baseweb="tab-list"] {
+    overflow-x: auto !important;
+    flex-wrap: nowrap !important;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .stTabs [data-baseweb="tab-list"]::-webkit-scrollbar { display: none; }
+  .stTabs [data-baseweb="tab"] {
+    padding: 7px 14px !important;
+    font-size: .82rem !important;
+    white-space: nowrap !important;
+  }
 }
 </style>
 """, unsafe_allow_html=True)
@@ -828,11 +860,14 @@ tomorrow  = today + dt.timedelta(days=1)
 
 with st.container():
     st.markdown('<div class="settings-strip">', unsafe_allow_html=True)
-    c1, c2, c3, c4 = st.columns([2, 2, 2, 3])
+    # Baris 1: tanggal beli & jual
+    c1, c2 = st.columns(2)
     with c1:
         buy_date  = st.date_input("🛒 Beli sore",  value=today,    format="DD/MM/YYYY")
     with c2:
         sell_date = st.date_input("💰 Jual pagi",  value=tomorrow, format="DD/MM/YYYY")
+    # Baris 2: durasi & skor minimum
+    c3, c4 = st.columns([1, 2])
     with c3:
         days_diff = (sell_date - buy_date).days
         if days_diff <= 0:
