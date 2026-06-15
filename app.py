@@ -177,6 +177,9 @@ st.markdown("""
 /* ── Divider ── */
 hr { border-color: var(--ln) !important; margin: .75rem 0 !important; }
 
+/* ── Icons ── */
+.ic { display:inline-block; vertical-align:middle; flex-shrink:0; }
+
 /* ══════════════════════════════
    STOCK CARDS
 ══════════════════════════════ */
@@ -232,7 +235,7 @@ hr { border-color: var(--ln) !important; margin: .75rem 0 !important; }
 .lv-1{border-left-color:#3ad6a6} .lv-2{border-left-color:#f4b740}
 .lv-3{border-left-color:#b47ef4} .lv-rr{border-left-color:#6c63ff}
 
-.ll { font-size: .58rem; text-transform: uppercase; letter-spacing: .06em; color: var(--t2); display: block; }
+.ll { font-size: .58rem; text-transform: uppercase; letter-spacing: .06em; color: var(--t2); display: flex; align-items: center; justify-content: center; gap: 3px; }
 .lval { font-size: .82rem; font-weight: 700; color: var(--t1); display: block; margin-top: 2px; }
 .lpct { font-size: .63rem; display: block; margin-top: 1px; }
 .pos { color: var(--bull) } .neg { color: var(--bear) }
@@ -248,7 +251,7 @@ hr { border-color: var(--ln) !important; margin: .75rem 0 !important; }
 }
 .ls-e{border-top-color:#8892b0} .ls-sl{border-top-color:#ff6b6b}
 .ls-1{border-top-color:#3ad6a6} .ls-2{border-top-color:#f4b740} .ls-3{border-top-color:#b47ef4}
-.ls-lbl { font-size: .6rem; text-transform: uppercase; letter-spacing: .07em; color: var(--t2); }
+.ls-lbl { font-size: .6rem; text-transform: uppercase; letter-spacing: .07em; color: var(--t2); display: flex; align-items: center; justify-content: center; gap: 3px; }
 .ls-val  { font-size: .92rem; font-weight: 700; color: var(--t1); margin: 4px 0 2px; display: block; }
 .ls-pct  { font-size: .68rem; }
 
@@ -558,7 +561,42 @@ def tier(score: int) -> tuple[str, str]:
     if score >= 0: return "🟠 Lemah",       "b-lemah"
     return "🔴 Skip", "b-skip"
 
-DOT = {"bullish": "🟢", "bearish": "🔴", "neutral": "🟡"}
+def _svg(d: str, color: str = "currentColor", size: int = 9) -> str:
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}" '
+        f'viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2.2" '
+        f'stroke-linecap="round" stroke-linejoin="round" class="ic">{d}</svg>'
+    )
+
+def _dot_svg(fill: str, stroke: str, inner: str) -> str:
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" '
+        f'viewBox="0 0 24 24" fill="none" class="ic">'
+        f'<circle cx="12" cy="12" r="10" fill="{fill}" stroke="{stroke}" stroke-width="1.5"/>'
+        f'{inner}</svg>'
+    )
+
+_I_ENTRY = _svg('<polyline points="22 7 13.5 15.5 8.5 10.5 1 18"/><polyline points="16 7 22 7 22 13"/>', "#8892b0")
+_I_SL    = _svg('<circle cx="12" cy="12" r="10"/><path d="M15 9 9 15"/><path d="M9 9 15 15"/>', "#ff6b6b")
+_I_RR    = _svg('<path d="m16 3 4 4-4 4"/><path d="M20 7H4"/><path d="m8 21-4-4 4-4"/><path d="M4 17h16"/>', "#6c63ff")
+_I_TP    = [
+    _svg('<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>', "#3ad6a6"),
+    _svg('<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/>', "#f4b740"),
+    _svg('<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>', "#b47ef4"),
+]
+_I_TOTAL = _svg('<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18M9 21V9"/>', "#8892b0", 12)
+_I_KUAT  = _svg('<polyline points="22 7 13.5 15.5 8.5 10.5 1 18"/><polyline points="16 7 22 7 22 13"/>', "#ff9090", 12)
+_I_MOD   = _svg('<path d="M8 6h12M6 12h12M4 18h12"/>', "#f4b740", 12)
+_I_LEMAH = _svg('<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>', "#ffa552", 12)
+
+DOT = {
+    "bullish": _dot_svg("rgba(58,214,166,.2)", "#3ad6a6",
+        '<path d="M9 12 11 14 15 10" fill="none" stroke="#3ad6a6" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>'),
+    "bearish": _dot_svg("rgba(255,107,107,.2)", "#ff6b6b",
+        '<path d="M15 9 9 15M9 9 15 15" fill="none" stroke="#ff6b6b" stroke-width="2.5" stroke-linecap="round"/>'),
+    "neutral": _dot_svg("rgba(244,183,64,.2)", "#f4b740",
+        '<path d="M8 12h8" fill="none" stroke="#f4b740" stroke-width="2.5" stroke-linecap="round"/>'),
+}
 
 
 # ════════════════════════════════════════════════════
@@ -575,7 +613,7 @@ def _tp_cells(tps: list, entry: float, cur: str = "IDR") -> str:
     for i, tp in enumerate(tps):
         cells += f"""
     <div class="lv {_TP_CLS[i]}">
-      <span class="ll">TP {i + 1}</span>
+      <span class="ll">{_I_TP[i]}TP {i + 1}</span>
       <span class="lval">{rp(tp, cur)}</span>
       <span class="lpct pos">{pct(tp, entry)}</span>
     </div>"""
@@ -602,17 +640,17 @@ def html_cards(rows: list) -> str:
   </div>
   <div class="lvg">
     <div class="lv lv-e">
-      <span class="ll">Entry</span>
+      <span class="ll">{_I_ENTRY}Entry</span>
       <span class="lval">{rp(e, cur)}</span>
       <span class="lpct" style="color:var(--t3)">±0%</span>
     </div>
     <div class="lv lv-sl">
-      <span class="ll">Stop Loss</span>
+      <span class="ll">{_I_SL}Stop Loss</span>
       <span class="lval">{rp(r["_sl"], cur)}</span>
       <span class="lpct neg">{pct(r["_sl"], e)}</span>
     </div>
     <div class="lv lv-rr">
-      <span class="ll">R:R</span>
+      <span class="ll">{_I_RR}R:R</span>
       <span class="lval">{r["_rr"]:.1f}×</span>
       <span class="lpct" style="color:var(--t3)">{rr_lbl}</span>
     </div>
@@ -630,10 +668,10 @@ def html_stats(rows: list) -> str:
     lemah  = sum(1 for r in rows if r["_score"] < 2)
     return f"""
 <div class="stats-bar">
-  <div class="chip">Total <b>{total}</b></div>
-  <div class="chip">🔥🟢 Kuat <b>{kuat}</b></div>
-  <div class="chip">🟡 Moderat <b>{mod}</b></div>
-  <div class="chip">🟠 Lemah <b>{lemah}</b></div>
+  <div class="chip">{_I_TOTAL} Total <b>{total}</b></div>
+  <div class="chip">{_I_KUAT} Kuat <b>{kuat}</b></div>
+  <div class="chip">{_I_MOD} Moderat <b>{mod}</b></div>
+  <div class="chip">{_I_LEMAH} Lemah <b>{lemah}</b></div>
 </div>"""
 
 
@@ -644,19 +682,19 @@ def html_level_strip(entry: float, sl: float, tps: list, cur: str = "IDR") -> st
     for i, tp in enumerate(tps):
         tp_items += f"""
   <div class="ls {_LS_CLS[i]}">
-    <div class="ls-lbl">TP {i + 1}</div>
+    <div class="ls-lbl">{_I_TP[i]}TP {i + 1}</div>
     <span class="ls-val">{rp(tp, cur)}</span>
     <span class="ls-pct pos">{pct(tp, entry)}</span>
   </div>"""
     return f"""
 <div class="lvl-strip">
   <div class="ls ls-e">
-    <div class="ls-lbl">Entry</div>
+    <div class="ls-lbl">{_I_ENTRY}Entry</div>
     <span class="ls-val">{rp(entry, cur)}</span>
     <span class="ls-pct" style="color:var(--t3)">±0%</span>
   </div>
   <div class="ls ls-sl">
-    <div class="ls-lbl">Stop Loss</div>
+    <div class="ls-lbl">{_I_SL}Stop Loss</div>
     <span class="ls-val">{rp(sl, cur)}</span>
     <span class="ls-pct neg">{pct(sl, entry)}</span>
   </div>
