@@ -30,36 +30,34 @@ st.markdown("""
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
 :root {
-  --bg:   #080d1a;
-  --c1:   #0f1629;
-  --c2:   #141d36;
-  --c3:   #1b2847;
-  --ln:   rgba(255,255,255,0.07);
-  --acc:  #6c63ff;
-  --bull: #3ad6a6;
-  --bear: #ff6b6b;
-  --warn: #f4b740;
-  --purp: #b47ef4;
-  --t1:   #e8eaf6;
-  --t2:   #8892b0;
-  --t3:   #3d4f6b;
+  --bg:  #080d1a;
+  --c1:  #0f1629;
+  --c2:  #141d36;
+  --ln:  rgba(255,255,255,0.07);
+  --acc: #6c63ff;
+  --bull:#3ad6a6;
+  --bear:#ff6b6b;
+  --t1:  #e8eaf6;
+  --t2:  #8892b0;
+  --t3:  #3d4f6b;
 }
 
 /* ── Streamlit chrome ── */
 #MainMenu, footer, .stDeployButton,
 [data-testid="stToolbar"], [data-testid="stDecoration"],
-[data-testid="stHeader"], [data-testid="manage-app-button"],
+[data-testid="stHeader"], [data-testid="stAppHeader"],
+[data-testid="manage-app-button"], .stAppHeader,
 .viewerBadge_container__r5tak, .viewerBadge_link__qRIco { display:none !important }
 
 /* ── Page ── */
-.stApp, .stAppHeader { background: var(--bg) !important }
+.stApp { background: var(--bg) !important }
+section[data-testid="stMain"] { padding-top: 0 !important; }
+.main { padding-top: 0 !important; }
 .main .block-container {
   padding: 0 1rem 3rem !important;
   max-width: 1440px !important;
   font-family: 'Inter', system-ui, sans-serif;
 }
-section[data-testid="stSidebar"] + div { padding-top: 0 !important; }
-.stAppHeader, [data-testid="stAppHeader"] { display: none !important; min-height: 0 !important; }
 
 /* ── App header ── */
 .app-hdr {
@@ -88,15 +86,6 @@ section[data-testid="stSidebar"] + div { padding-top: 0 !important; }
   line-height: 1.2;
 }
 .app-hdr p { color: var(--t2); font-size: .82rem; margin: 0; }
-
-.param-box {
-  background: var(--c2); border: 1px solid var(--ln); border-radius: 12px;
-  padding: 12px 14px; margin-top: 10px; font-size: .78rem;
-}
-.param-box .row { display:flex; justify-content:space-between; padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,.04); }
-.param-box .row:last-child { border-bottom: none; }
-.param-box .lbl { color: var(--t2); }
-.param-box .val { color: var(--t1); font-weight: 600; font-family: monospace; }
 
 /* ── Tabs ── */
 .stTabs [data-baseweb="tab-list"] {
@@ -518,12 +507,7 @@ def score_and_check(df: pd.DataFrame):
 
 
 def find_key_levels(df: pd.DataFrame, entry: float, atr: float, h: dict, cur: str = "IDR"):
-    """
-    TP dari swing high nyata (resistance sebelumnya).
-    SL dari swing low nyata (support terdekat).
-    Fallback ke ATR kalau tidak ada level yang cocok.
-    """
-    # Rounding: IDR = integer, USD = pertahankan desimal
+    # IDR dibulatkan ke integer, USD dibiarkan desimal
     def _rnd(n: float) -> float:
         return float(round(n)) if cur == "IDR" else n
 
@@ -605,9 +589,6 @@ def pct(new: float, base: float) -> str:
     v = (new - base) / base * 100
     return f"{v:+.1f}%"
 
-def pct_cls(new: float, base: float) -> str:
-    return "pos" if new >= base else "neg"
-
 def tier(score: int) -> tuple[str, str]:
     if score >= 6: return "🔥 Kuat Sekali", "b-fire"
     if score >= 4: return "🟢 Kuat",        "b-kuat"
@@ -657,9 +638,8 @@ DOT = {
 # HTML COMPONENTS
 # ════════════════════════════════════════════════════
 
-_TP_CLS  = ["lv-1", "lv-2", "lv-3"]
-_TP_COLORS = ["#3ad6a6", "#f4b740", "#b47ef4"]
-_RR_LABEL  = {1: "TP1/SL", 2: "TP2/SL", 3: "TP2/SL"}
+_TP_CLS   = ["lv-1", "lv-2", "lv-3"]
+_RR_LABEL = {1: "TP1/SL", 2: "TP2/SL", 3: "TP2/SL"}
 
 def _tp_cells(tps: list, entry: float, cur: str = "IDR") -> str:
     n = len(tps)
@@ -678,11 +658,10 @@ def html_cards(rows: list) -> str:
     cards = ['<div class="stock-grid">']
     for r in rows:
         lbl, bcls = tier(r["_score"])
-        e    = r["_entry"]
-        tps  = r["_tps"]
-        n_tp = len(tps)
-        cur  = r.get("_cur", "IDR")
-        rr_lbl = _RR_LABEL.get(n_tp, "TP/SL")
+        e      = r["_entry"]
+        tps    = r["_tps"]
+        cur    = r.get("_cur", "IDR")
+        rr_lbl = _RR_LABEL.get(len(tps), "TP2/SL")
         cards.append(f"""
 <div class="sc">
   <div class="sc-top">
@@ -943,8 +922,7 @@ with tab_scan:
         )
 
     if do_scan:
-        # Hapus hasil scan sebelumnya agar tidak campur IDX & crypto
-        st.session_state.pop("scan_rows", None)
+        st.session_state.pop("scan_rows", None)  # clear agar IDX & crypto tidak tercampur
 
         rows = []
         bar  = st.progress(0, text="Memulai scan…")
@@ -1003,31 +981,22 @@ with tab_scan:
             )
             st.success(f"✅ Ditemukan **{len(rows)}** aset, diurutkan dari sinyal terkuat.")
 
-    # ── Hasil scan ──────────────────────────────────
     if st.session_state.get("scan_rows"):
         rows = st.session_state["scan_rows"]
 
         st.markdown(html_stats(rows), unsafe_allow_html=True)
         st.markdown(html_cards(rows), unsafe_allow_html=True)
-
         st.markdown("<br>", unsafe_allow_html=True)
 
-        # Download CSV
-        all_keys = set()
-        for r in rows:
-            all_keys.update(r.keys())
-        export_base = ["Signal", "Skor", "Kode", "Nama"]
+        all_keys    = set().union(*(r.keys() for r in rows))
         cur_rows    = rows[0].get("_cur", "IDR")
         e_lbl       = "Entry" if cur_rows == "USD" else "Entry (Rp)"
         export_tp   = [f"TP{i+1}" for i in range(3) if f"TP{i+1}" in all_keys]
-        export_cols = export_base + [e_lbl, "SL"] + export_tp + ["R:R"]
-        export_cols = [c for c in export_cols if c in all_keys]
-        csv  = pd.DataFrame(rows)[export_cols].to_csv(index=False)
+        export_cols = [c for c in ["Signal", "Skor", "Kode", "Nama", e_lbl, "SL"] + export_tp + ["R:R"] if c in all_keys]
+        csv   = pd.DataFrame(rows)[export_cols].to_csv(index=False)
         fname = horizon_name.split("(")[0].strip().replace(" ", "_").replace("–", "-")
-        st.download_button("⬇️  Download CSV", csv,
-                           file_name=f"scan_{fname}.csv", mime="text/csv")
+        st.download_button("⬇️  Download CSV", csv, file_name=f"scan_{fname}.csv", mime="text/csv")
 
-        # ── Detail per aset ─────────────────────────
         st.markdown('<div class="sec-lbl">Detail Aset</div>', unsafe_allow_html=True)
 
         all_names = {r["Kode"]: r["Nama"] for r in rows}
@@ -1125,7 +1094,6 @@ with tab_detail:
     tps, sl, rr = find_key_levels(df, entry, atr, h_params, det_cur)
     lbl, _ = tier(score)
 
-    # Metrics — baris dinamis
     rr_tp_idx = min(1, len(tps) - 1)
     dcols = st.columns(3 + len(tps) + 1)
     dcols[0].metric("Harga Terakhir", rp(entry, det_cur), f"{chg:+.2f}%")
@@ -1150,11 +1118,9 @@ with tab_detail:
         use_container_width=True,
     )
 
-    # Signal breakdown
     st.markdown('<div class="sec-lbl">Breakdown Sinyal</div>', unsafe_allow_html=True)
     st.markdown(html_signals(checks), unsafe_allow_html=True)
 
-    # Info
     st.info(
         f"**Entry** = harga penutupan terakhir (aproksimasi harga beli sore). "
         f"**TP** diambil dari swing high nyata (resistance sebelumnya di chart). "
