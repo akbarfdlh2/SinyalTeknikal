@@ -48,7 +48,8 @@ st.markdown("""
 /* ── Streamlit chrome ── */
 #MainMenu, footer, .stDeployButton,
 [data-testid="stToolbar"], [data-testid="stDecoration"],
-[data-testid="stHeader"] { display:none !important }
+[data-testid="stHeader"], [data-testid="manage-app-button"],
+.viewerBadge_container__r5tak, .viewerBadge_link__qRIco { display:none !important }
 
 /* ── Page ── */
 .stApp, .stAppHeader { background: var(--bg) !important }
