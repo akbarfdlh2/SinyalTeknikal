@@ -3,9 +3,13 @@ Sinyal Teknikal — Swing Trading Scanner IDX
 """
 
 import datetime as dt
+import html
+import math
+import time
 
 import pandas as pd
 import plotly.graph_objects as go
+import requests
 import streamlit as st
 import yfinance as yf
 from plotly.subplots import make_subplots
@@ -206,8 +210,52 @@ hr { border-color: var(--ln) !important; margin: .75rem 0 !important; }
   display: flex; justify-content: space-between;
   align-items: flex-start; margin-bottom: 14px;
 }
+.sc-code-row { display: flex; align-items: center; gap: 5px; }
 .sc-ticker { font-size: 1.05rem; font-weight: 700; color: #fff; letter-spacing: -.01em; }
 .sc-name   { font-size: .72rem; color: var(--t2); margin-top: 3px; }
+.copy-code {
+  appearance: none; background: transparent; border: none;
+  color: #9aa5c4; border-radius: 6px; width: 27px; height: 27px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: all .15s; position: relative;
+}
+.copy-code::before, .copy-code::after {
+  content: ""; position: absolute; width: 10px; height: 12px;
+  border: 1.8px solid currentColor; border-radius: 2px;
+  box-sizing: border-box; transition: all .15s;
+}
+.copy-code::before { transform: translate(-2px, -2px); }
+.copy-code::after { transform: translate(3px, 3px); background: var(--c1); }
+.copy-code:hover { color: #fff; background: rgba(108,99,255,.16); }
+.copy-code.copied { color: var(--bull); background: rgba(58,214,166,.1); }
+.copy-code.copied::before {
+  width: 11px; height: 6px; border-width: 0 0 2px 2px;
+  border-radius: 0; transform: translate(0, -1px) rotate(-45deg);
+}
+.copy-code.copied::after { display: none; }
+.copy-info {
+  appearance: none; width: 100%; margin-top: 9px; padding: 7px 10px;
+  background: rgba(108,99,255,.08); color: var(--t2);
+  border: 1px solid rgba(108,99,255,.2); border-radius: 8px;
+  display: flex; align-items: center; justify-content: center; gap: 7px;
+  font-size: .68rem; font-weight: 600; cursor: pointer; transition: all .15s;
+}
+.copy-info:hover { color: #fff; background: rgba(108,99,255,.18); border-color: rgba(108,99,255,.4); }
+.copy-info.copied { color: var(--bull); background: rgba(58,214,166,.08); border-color: rgba(58,214,166,.3); }
+.copy-info-icon {
+  position: relative; display: inline-block; width: 13px; height: 14px;
+}
+.copy-info-icon::before, .copy-info-icon::after {
+  content: ""; position: absolute; width: 8px; height: 10px;
+  border: 1.5px solid currentColor; border-radius: 2px; box-sizing: border-box;
+}
+.copy-info-icon::before { left: 0; top: 0; }
+.copy-info-icon::after { left: 4px; top: 4px; background: var(--c1); }
+.copy-info.copied .copy-info-icon::before {
+  width: 10px; height: 5px; left: 1px; top: 3px;
+  border-width: 0 0 2px 2px; border-radius: 0; transform: rotate(-45deg);
+}
+.copy-info.copied .copy-info-icon::after { display: none; }
 
 /* badges */
 .badge { font-size: .67rem; font-weight: 700; padding: 4px 10px; border-radius: 20px; white-space: nowrap; }
@@ -396,6 +444,30 @@ CRYPTO_UNIVERSE = {
     "WIF-USD":  "dogwifhat",        "TON-USD":  "Toncoin",
 }
 
+INDODAX_FALLBACK_UNIVERSE = {
+    "BTCIDR":  "Bitcoin",          "ETHIDR":  "Ethereum",
+    "BNBIDR":  "BNB",              "SOLIDR":  "Solana",
+    "XRPIDR":  "XRP",              "ADAIDR":  "Cardano",
+    "AVAXIDR": "Avalanche",        "DOGEIDR": "Dogecoin",
+    "DOTIDR":  "Polkadot",         "LINKIDR": "Chainlink",
+    "POLIDR":  "Polygon",          "UNIIDR":  "Uniswap",
+    "LTCIDR":  "Litecoin",         "BCHIDR":  "Bitcoin Cash",
+    "ATOMIDR": "Cosmos",           "NEARIDR": "NEAR Protocol",
+    "TRXIDR":  "TRON",             "ARBIDR":  "Arbitrum",
+    "OPIDR":   "Optimism",         "SUIIDR":  "Sui",
+    "INJIDR":  "Injective",        "FILIDR":  "Filecoin",
+    "ICPIDR":  "Internet Computer","PEPEIDR": "Pepe",
+    "WIFIDR":  "dogwifhat",        "TONIDR":  "Toncoin",
+}
+
+INDODAX_FALLBACK_PRICE_STEPS = {
+    "BTCIDR": 1000.0,
+    "ETHIDR": 1000.0,
+    "LTCIDR": 1000.0,
+    "BCHIDR": 1000.0,
+    "PEPEIDR": 0.000001,
+}
+
 HORIZONS = {
     "Overnight (1 Hari)": dict(atr_tp=[0.8, 1.5, 2.2], atr_sl=0.6, period="3mo"),
     "2–3 Hari":           dict(atr_tp=[1.2, 2.2, 3.2], atr_sl=0.9, period="6mo"),
@@ -417,8 +489,86 @@ LEVEL_STYLE = {
 # DATA & INDICATORS
 # ════════════════════════════════════════════════════
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_indodax_markets() -> tuple[dict, dict]:
+    try:
+        pairs_response = requests.get("https://indodax.com/api/pairs", timeout=20)
+        pairs_response.raise_for_status()
+        pairs = pairs_response.json()
+
+        summaries_response = requests.get("https://indodax.com/api/summaries", timeout=20)
+        summaries_response.raise_for_status()
+        summaries = summaries_response.json().get("tickers", {})
+
+        markets = []
+        price_steps = {}
+        for pair in pairs:
+            symbol = pair.get("symbol", "")
+            if (
+                pair.get("base_currency") != "idr"
+                or pair.get("is_maintenance")
+                or pair.get("is_market_suspended")
+                or not symbol
+            ):
+                continue
+
+            ticker = summaries.get(pair.get("ticker_id", ""), {})
+            name = ticker.get("name") or pair.get("description") or symbol
+            volume_idr = pd.to_numeric(ticker.get("vol_idr", 0), errors="coerce")
+            volume_idr = 0.0 if pd.isna(volume_idr) else float(volume_idr)
+            markets.append((symbol, name, volume_idr))
+
+            price_step = pd.to_numeric(pair.get("price_precision", 1), errors="coerce")
+            if not pd.isna(price_step) and float(price_step) > 0:
+                price_steps[symbol] = float(price_step)
+
+        markets.sort(key=lambda item: item[2], reverse=True)
+        return (
+            {symbol: name for symbol, name, _ in markets},
+            price_steps,
+        )
+    except (requests.RequestException, AttributeError, TypeError, ValueError):
+        return INDODAX_FALLBACK_UNIVERSE, INDODAX_FALLBACK_PRICE_STEPS
+
+
 @st.cache_data(ttl=600, show_spinner=False)
-def load_data(ticker: str, period: str) -> pd.DataFrame:
+def load_data(ticker: str, period: str, source: str = "yahoo") -> pd.DataFrame:
+    if source == "indodax":
+        period_days = {"3mo": 100, "6mo": 190, "1y": 370, "2y": 740}
+        to_ts = int(time.time())
+        response = requests.get(
+            "https://indodax.com/tradingview/history_v2",
+            params={
+                "from": to_ts - period_days.get(period, 370) * 86400,
+                "to": to_ts,
+                "tf": "1D",
+                "symbol": ticker,
+            },
+            timeout=20,
+        )
+        response.raise_for_status()
+        records = response.json()
+        if not isinstance(records, list):
+            raise ValueError("Respons data Indodax tidak valid")
+
+        columns = ["Open", "High", "Low", "Close", "Volume"]
+        if not records:
+            return pd.DataFrame(columns=columns)
+
+        df = pd.DataFrame.from_records(records)
+        if "Time" not in df or any(col not in df for col in columns):
+            raise ValueError("Data OHLC Indodax tidak lengkap")
+
+        df.index = pd.to_datetime(df.pop("Time"), unit="s", utc=True).dt.tz_convert(None)
+        df.index.name = "Date"
+        df[columns] = df[columns].apply(pd.to_numeric, errors="coerce")
+        return (
+            df[columns]
+            .sort_index()
+            .loc[lambda frame: ~frame.index.duplicated(keep="last")]
+            .dropna(subset=["Close"])
+        )
+
     df = yf.download(ticker, period=period, interval="1d",
                      auto_adjust=True, progress=False)
     if isinstance(df.columns, pd.MultiIndex):
@@ -506,10 +656,31 @@ def score_and_check(df: pd.DataFrame):
     return score, checks
 
 
-def find_key_levels(df: pd.DataFrame, entry: float, atr: float, h: dict, cur: str = "IDR"):
-    # IDR dibulatkan ke integer, USD dibiarkan desimal
-    def _rnd(n: float) -> float:
-        return float(round(n)) if cur == "IDR" else n
+def find_key_levels(
+    df: pd.DataFrame,
+    entry: float,
+    atr: float,
+    h: dict,
+    cur: str = "IDR",
+    price_step: float = None,
+):
+    def _rnd(n: float, direction: str) -> float:
+        if price_step:
+            units = (
+                math.ceil(n / price_step)
+                if direction == "up"
+                else math.floor(n / price_step)
+            )
+            value = units * price_step
+            decimals = (
+                max(0, int(round(-math.log10(price_step))))
+                if price_step < 1
+                else 0
+            )
+            return float(round(value, decimals))
+        if cur == "IDR":
+            return float(math.ceil(n) if direction == "up" else math.floor(n))
+        return n
 
     sw = 4
     n  = len(df)
@@ -538,20 +709,20 @@ def find_key_levels(df: pd.DataFrame, entry: float, atr: float, h: dict, cur: st
             while j < len(raw_res) and (raw_res[j] - grp[0]) / grp[0] < 0.01:
                 grp.append(raw_res[j])
                 j += 1
-            lvl = _rnd(sum(grp) / len(grp))
+            lvl = _rnd(sum(grp) / len(grp), "up")
             if not tps or (lvl - tps[-1]) / tps[-1] > 0.006:
                 tps.append(lvl)
             i = j
 
     if not tps:
         tps = [
-            _rnd(entry + atr * h["atr_tp"][0]),
-            _rnd(entry + atr * h["atr_tp"][1]),
-            _rnd(entry + atr * h["atr_tp"][2]),
+            _rnd(entry + atr * h["atr_tp"][0], "up"),
+            _rnd(entry + atr * h["atr_tp"][1], "up"),
+            _rnd(entry + atr * h["atr_tp"][2], "up"),
         ]
 
     # ── Cari support (swing low di bawah entry) ──
-    sl_default = _rnd(entry - atr * h["atr_sl"])
+    sl_default = _rnd(entry - atr * h["atr_sl"], "down")
     l_arr = df["Low"].values
     sl_min_dist = max(entry * 0.005, atr * 0.3)
     sl_max_dist = atr * h["atr_sl"] * 2.2
@@ -564,7 +735,7 @@ def find_key_levels(df: pd.DataFrame, entry: float, atr: float, h: dict, cur: st
             if sl_min_dist <= dist <= sl_max_dist:
                 raw_sup.append(float(val))
 
-    sl = _rnd(max(raw_sup)) if raw_sup else sl_default
+    sl = _rnd(max(raw_sup), "down") if raw_sup else sl_default
 
     rr_tp = tps[1] if len(tps) >= 2 else tps[0]
     rr = (rr_tp - entry) / (entry - sl) if entry > sl else 0
@@ -583,7 +754,14 @@ def rp(n: float, cur: str = "IDR") -> str:
         if n >= 1:     return f"${n:,.3f}"
         if n >= 0.01:  return f"${n:.5f}"
         return f"${n:.7f}"
+    if cur == "IDR_INDODAX" and abs(n) < 1:
+        return f"{n:.8f}".rstrip("0").rstrip(".").replace(".", ",")
     return f"{int(round(n)):,}".replace(",", ".")
+
+def display_ticker(ticker: str, source: str = "yahoo") -> str:
+    if source == "indodax" and ticker.endswith("IDR"):
+        return f"{ticker[:-3]}/IDR"
+    return ticker.replace("-USD", "")
 
 def pct(new: float, base: float) -> str:
     v = (new - base) / base * 100
@@ -655,19 +833,40 @@ def _tp_cells(tps: list, entry: float, cur: str = "IDR") -> str:
 
 
 def html_cards(rows: list) -> str:
-    cards = ['<div class="stock-grid">']
+    cards = ['<div class="stock-grid" data-copy-cards>']
     for r in rows:
         lbl, bcls = tier(r["_score"])
         e      = r["_entry"]
         tps    = r["_tps"]
         cur    = r.get("_cur", "IDR")
         rr_lbl = _RR_LABEL.get(len(tps), "TP2/SL")
+        code = html.escape(str(r["Kode"]))
+        name = html.escape(str(r["Nama"]))
+        info_lines = [
+            f"Kode: {r['Kode']}",
+            f"Nama: {r['Nama']}",
+            f"Sinyal: {lbl} (Skor {r['_score']})",
+            "",
+            f"Entry: {rp(e, cur)}",
+            f"Stop Loss: {rp(r['_sl'], cur)} ({pct(r['_sl'], e)})",
+            f"R:R: {r['_rr']:.1f}× ({rr_lbl})",
+            "",
+            "Target Profit:",
+        ]
+        info_lines.extend(
+            f"- TP {i + 1}: {rp(tp, cur)} ({pct(tp, e)})"
+            for i, tp in enumerate(tps)
+        )
+        full_info = html.escape("\n".join(info_lines), quote=True)
         cards.append(f"""
 <div class="sc">
   <div class="sc-top">
     <div>
-      <div class="sc-ticker">{r["Kode"]}</div>
-      <div class="sc-name">{r["Nama"]}</div>
+      <div class="sc-code-row">
+        <div class="sc-ticker">{code}</div>
+        <button class="copy-code" type="button" data-copy="{code}" title="Salin kode {code}" aria-label="Salin kode {code}"></button>
+      </div>
+      <div class="sc-name">{name}</div>
     </div>
     <span class="badge {bcls}">{lbl}</span>
   </div>
@@ -689,8 +888,57 @@ def html_cards(rows: list) -> str:
     </div>
   </div>
   {_tp_cells(tps, e, cur)}
+  <button class="copy-info" type="button" data-copy="{full_info}" title="Salin informasi lengkap {code}" aria-label="Salin informasi lengkap {code}">
+    <span class="copy-info-icon"></span>
+    <span class="copy-info-label">Salin info lengkap</span>
+  </button>
 </div>""")
     cards.append("</div>")
+    cards.append("""
+<script>
+(() => {
+  const root = document.currentScript.previousElementSibling;
+  if (!root || root.dataset.copyReady) return;
+  root.dataset.copyReady = "true";
+
+  const fallbackCopy = text => {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.select();
+    document.execCommand("copy");
+    area.remove();
+  };
+
+  root.addEventListener("click", async event => {
+    const button = event.target.closest("[data-copy]");
+    if (!button) return;
+    const text = button.dataset.copy;
+    try {
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
+      else fallbackCopy(text);
+    } catch (_) {
+      fallbackCopy(text);
+    }
+    button.classList.add("copied");
+    button.title = button.classList.contains("copy-code")
+      ? `${text} tersalin`
+      : "Informasi lengkap tersalin";
+    const label = button.querySelector(".copy-info-label");
+    if (label) label.textContent = "Informasi tersalin";
+    setTimeout(() => {
+      button.classList.remove("copied");
+      button.title = button.classList.contains("copy-code")
+        ? `Salin kode ${text}`
+        : "Salin informasi lengkap";
+      if (label) label.textContent = "Salin info lengkap";
+    }, 1400);
+  });
+})();
+</script>
+""")
     return "\n".join(cards)
 
 
@@ -890,6 +1138,7 @@ with st.container():
     st.markdown("</div>", unsafe_allow_html=True)
 
 h_params = HORIZONS[horizon_name]
+indodax_universe, indodax_price_steps = load_indodax_markets()
 
 
 # ── Tabs ────────────────────────────────────────────
@@ -903,21 +1152,40 @@ with tab_scan:
     # ── Pilih aset ──────────────────────────────────
     asset_type = st.radio(
         "Aset",
-        ["📊 Saham IDX", "₿ Crypto"],
+        ["📊 Saham IDX", "₿ Crypto USD", "Crypto Indodax (IDR)"],
         horizontal=True,
         label_visibility="collapsed",
     )
-    is_crypto  = asset_type.startswith("₿")
-    universe   = CRYPTO_UNIVERSE if is_crypto else IDX_UNIVERSE
-    scan_cur   = "USD" if is_crypto else "IDR"
-    entry_lbl  = "Entry" if is_crypto else "Entry (Rp)"
+    if asset_type.startswith("📊"):
+        universe = IDX_UNIVERSE
+        scan_source = "yahoo"
+        scan_cur = "IDR"
+        scan_label = "saham IDX"
+    elif asset_type.startswith("₿"):
+        universe = CRYPTO_UNIVERSE
+        scan_source = "yahoo"
+        scan_cur = "USD"
+        scan_label = "koin crypto USD"
+    else:
+        scan_limit = st.select_slider(
+            "Jumlah pair Indodax",
+            options=[25, 50, 100, 150],
+            value=50,
+            help="Pair dipilih berdasarkan volume transaksi IDR 24 jam terbesar.",
+        )
+        universe = dict(list(indodax_universe.items())[:scan_limit])
+        scan_source = "indodax"
+        scan_cur = "IDR_INDODAX"
+        scan_label = f"pair Indodax teraktif dari {len(indodax_universe)} pair tersedia"
+    scan_market_key = f"{asset_type}:{len(universe)}"
+    entry_lbl = "Entry" if scan_cur == "USD" else "Entry (Rp)"
 
     col_btn, col_txt = st.columns([1, 3])
     with col_btn:
         do_scan = st.button("🔄  Scan Sekarang", type="primary")
     with col_txt:
         st.caption(
-            f"Memindai **{len(universe)} {'koin crypto' if is_crypto else 'saham IDX'}**. "
+            f"Memindai **{len(universe)} {scan_label}**. "
             "Pertama kali ±1–2 menit. Berikutnya dari cache 10 menit."
         )
 
@@ -934,8 +1202,8 @@ with tab_scan:
                 text=f"Menganalisa {code}… ({i+1}/{len(codes)})",
             )
             try:
-                yf_ticker = code if is_crypto else f"{code}.JK"
-                df = load_data(yf_ticker, h_params["period"])
+                ticker = f"{code}.JK" if asset_type.startswith("📊") else code
+                df = load_data(ticker, h_params["period"], scan_source)
                 if len(df) < 55:
                     continue
                 df = add_indicators(df)
@@ -946,7 +1214,16 @@ with tab_scan:
                 last  = df.iloc[-1]
                 entry = float(last["Close"])
                 atr   = float(last["ATR"])
-                tps, sl, rr = find_key_levels(df, entry, atr, h_params, scan_cur)
+                if pd.isna(atr) or atr <= 0:
+                    continue
+                price_step = (
+                    indodax_price_steps.get(ticker, 1.0)
+                    if scan_source == "indodax"
+                    else None
+                )
+                tps, sl, rr = find_key_levels(
+                    df, entry, atr, h_params, scan_cur, price_step
+                )
 
                 tp_export = {
                     f"TP{j+1}": f"{rp(tp, scan_cur)} ({pct(tp, entry)})"
@@ -954,11 +1231,11 @@ with tab_scan:
                 }
 
                 rows.append(dict(
-                    Kode=code, Nama=universe[code],
+                    Kode=display_ticker(code, scan_source), Nama=universe[code],
                     _score=score, _entry=entry,
                     _sl=sl, _tps=tps, _rr=rr,
                     _checks=checks, _cur=scan_cur,
-                    _yf_ticker=yf_ticker,
+                    _ticker=ticker, _source=scan_source,
                     Signal=tier(score)[0],
                     Skor=score,
                     **{
@@ -979,13 +1256,17 @@ with tab_scan:
             st.session_state["scan_rows"] = sorted(
                 rows, key=lambda r: r["_score"], reverse=True
             )
+            st.session_state["scan_market"] = scan_market_key
             st.success(f"✅ Ditemukan **{len(rows)}** aset, diurutkan dari sinyal terkuat.")
 
-    if st.session_state.get("scan_rows"):
+    if (
+        st.session_state.get("scan_rows")
+        and st.session_state.get("scan_market") == scan_market_key
+    ):
         rows = st.session_state["scan_rows"]
 
         st.markdown(html_stats(rows), unsafe_allow_html=True)
-        st.markdown(html_cards(rows), unsafe_allow_html=True)
+        st.html(html_cards(rows), unsafe_allow_javascript=True)
         st.markdown("<br>", unsafe_allow_html=True)
 
         all_keys    = set().union(*(r.keys() for r in rows))
@@ -1030,7 +1311,11 @@ with tab_scan:
 
         st.markdown('<div class="sec-lbl">Chart</div>', unsafe_allow_html=True)
         try:
-            df_sel = load_data(sel["_yf_ticker"], h_params["period"])
+            df_sel = load_data(
+                sel.get("_ticker", sel.get("_yf_ticker")),
+                h_params["period"],
+                sel.get("_source", "yahoo"),
+            )
             df_sel = add_indicators(df_sel)
             levels_sel = {"entry": sel["_entry"], "sl": sel["_sl"]}
             for i, tp in enumerate(sel["_tps"], 1):
@@ -1050,9 +1335,13 @@ with tab_detail:
     col_m, col_t, col_p = st.columns([1, 1, 1])
 
     with col_m:
-        mode = st.radio("Aset", ["Saham IDX", "Crypto", "Manual"])
+        mode = st.radio(
+            "Aset",
+            ["Saham IDX", "Crypto USD", "Crypto Indodax", "Manual"],
+        )
 
     with col_t:
+        data_source = "yahoo"
         if mode == "Saham IDX":
             pick   = st.selectbox(
                 "Saham",
@@ -1060,21 +1349,37 @@ with tab_detail:
                 format_func=lambda k: f"{k}  —  {IDX_UNIVERSE[k]}",
             )
             ticker = f"{pick}.JK"
-        elif mode == "Crypto":
+            chart_label = pick
+            det_cur = "IDR"
+        elif mode == "Crypto USD":
             pick   = st.selectbox(
                 "Koin",
                 list(CRYPTO_UNIVERSE.keys()),
                 format_func=lambda k: f"{k.replace('-USD','')}  —  {CRYPTO_UNIVERSE[k]}",
             )
             ticker = pick
+            chart_label = display_ticker(ticker)
+            det_cur = "USD"
+        elif mode == "Crypto Indodax":
+            pick = st.selectbox(
+                "Koin Indodax",
+                list(indodax_universe.keys()),
+                format_func=lambda k: f"{display_ticker(k, 'indodax')}  —  {indodax_universe[k]}",
+            )
+            ticker = pick
+            chart_label = f"{display_ticker(ticker, 'indodax')} · Indodax"
+            data_source = "indodax"
+            det_cur = "IDR_INDODAX"
         else:
             ticker = st.text_input("Ticker Yahoo Finance", "BBCA.JK").strip().upper()
+            chart_label = ticker
+            det_cur = "USD" if ticker.endswith("-USD") else "IDR"
 
     with col_p:
         period = st.selectbox("Rentang Data", ["3mo", "6mo", "1y", "2y"], index=2)
 
     try:
-        df = load_data(ticker, period)
+        df = load_data(ticker, period, data_source)
     except Exception as e:
         st.error(f"Gagal ambil data: {e}")
         st.stop()
@@ -1090,8 +1395,15 @@ with tab_detail:
     entry = float(last["Close"])
     chg   = (entry - float(prev["Close"])) / float(prev["Close"]) * 100
     atr   = float(last["ATR"])
-    det_cur = "USD" if ticker.endswith("-USD") else "IDR"
-    tps, sl, rr = find_key_levels(df, entry, atr, h_params, det_cur)
+    if pd.isna(atr) or atr <= 0:
+        st.warning(f"Data `{chart_label}` tidak memiliki volatilitas yang cukup untuk dianalisa.")
+        st.stop()
+    price_step = (
+        indodax_price_steps.get(ticker, 1.0)
+        if data_source == "indodax"
+        else None
+    )
+    tps, sl, rr = find_key_levels(df, entry, atr, h_params, det_cur, price_step)
     lbl, _ = tier(score)
 
     rr_tp_idx = min(1, len(tps) - 1)
@@ -1114,7 +1426,7 @@ with tab_detail:
     for i, tp in enumerate(tps, 1):
         levels_detail[f"tp{i}"] = tp
     st.plotly_chart(
-        make_chart(df, ticker, levels_detail, det_cur),
+        make_chart(df, chart_label, levels_detail, det_cur),
         use_container_width=True,
     )
 

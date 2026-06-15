@@ -10,15 +10,16 @@ Scanner swing trading **Saham IDX & Crypto** berbasis analisis teknikal — diba
 
 ## Fitur
 
-- **Scanner 50 Saham IDX + 26 Koin Crypto** — memindai aset dari berbagai sektor secara otomatis
+- **Scanner 50 Saham IDX + Crypto USD + hingga 150 Pair Indodax** — pair Indodax diurutkan otomatis berdasarkan volume 24 jam
 - **Indikator Teknikal** — SMA-20, SMA-50, RSI-14, MACD (12,26,9), ATR-14, dan Volume
 - **Sistem Scoring Sinyal** — skor 0–7 berdasarkan kekuatan konfluensi sinyal
 - **5 Horizon Trading** — dari Overnight (1 hari) hingga 1 Bulan
 - **Level dari Swing Nyata** — TP dari resistance sebelumnya, SL dari support terdekat di chart; ATR sebagai fallback
 - **Risk:Reward Ratio** — kalkulasi R:R otomatis (TP2 vs SL)
 - **Chart Interaktif** — candlestick + MA, RSI, dan MACD dalam satu tampilan
-- **Analisa Detail** — dukung saham IDX, kripto, maupun ticker Yahoo Finance kustom
+- **Analisa Detail** — dukung saham IDX, crypto USD, pasangan IDR Indodax, maupun ticker Yahoo Finance kustom
 - **Export CSV** — unduh hasil scan sebagai file CSV
+- **Copy Kode & Info Aset** — salin kode saja atau informasi trading lengkap langsung dari kartu hasil scanner
 
 ---
 
@@ -72,7 +73,7 @@ Faktor ATR digunakan sebagai fallback jika tidak ditemukan swing high/low yang m
 
 1. Pilih **tanggal beli** dan **tanggal jual** untuk menentukan horizon otomatis
 2. Atur **Skor Minimum** (default: 2 = Moderat ke atas)
-3. Pilih aset: **Saham IDX** atau **Crypto**
+3. Pilih aset: **Saham IDX**, **Crypto USD**, atau **Crypto Indodax (IDR)**. Untuk Indodax, pilih jumlah pair aktif yang ingin dipindai
 4. Klik **Scan Sekarang**
 5. Hasil tampil sebagai kartu diurutkan dari sinyal terkuat
 6. Pilih aset dari dropdown untuk melihat chart dan breakdown sinyal
@@ -80,7 +81,7 @@ Faktor ATR digunakan sebagai fallback jika tidak ditemukan swing high/low yang m
 
 ### Tab Analisa Detail
 
-- Pilih mode: **Saham IDX**, **Crypto**, atau **Manual** (ticker Yahoo Finance kustom)
+- Pilih mode: **Saham IDX**, **Crypto USD**, **Crypto Indodax**, atau **Manual** (ticker Yahoo Finance kustom). Analisa Detail Indodax memuat seluruh pair IDR aktif
 - Pilih rentang data (3 bulan – 2 tahun)
 - Lihat chart lengkap dengan level Entry/TP/SL dan breakdown sinyal individual
 
@@ -105,6 +106,7 @@ Buka `http://localhost:8501` di browser.
 |---|---|
 | `streamlit` | Framework UI web |
 | `yfinance` | Data harga dari Yahoo Finance |
+| `requests` | Data OHLC pasangan IDR dari API publik Indodax |
 | `pandas` | Manipulasi data |
 | `plotly` | Chart interaktif |
 
