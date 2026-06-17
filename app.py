@@ -346,6 +346,53 @@ hr { border-color: var(--ln) !important; margin: .75rem 0 !important; }
 .app-footer .creator { font-weight: 600; color: var(--t1); }
 
 /* ══════════════════════════════
+   PORTFOLIO
+══════════════════════════════ */
+.port-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+.pc {
+  background: var(--c1); border: 1px solid var(--ln);
+  border-radius: 16px; padding: 16px;
+  transition: all .2s ease;
+}
+.pc:hover {
+  border-color: rgba(108,99,255,.4);
+  background: var(--c2);
+  box-shadow: 0 6px 28px rgba(0,0,0,.45);
+}
+.pc-top {
+  display: flex; justify-content: space-between;
+  align-items: flex-start; margin-bottom: 10px;
+}
+.pnl-pos { color: var(--bull); }
+.pnl-neg { color: var(--bear); }
+.pnl-big { font-size: 1.5rem; font-weight: 800; display: block; margin-top: 4px; }
+.rec-badge {
+  font-size: .68rem; font-weight: 700;
+  padding: 4px 11px; border-radius: 20px; white-space: nowrap;
+}
+.rec-cut  { background: rgba(255,107,107,.15); color: #ff6b6b; border: 1px solid rgba(255,107,107,.3); }
+.rec-warn { background: rgba(244,183,64,.15);  color: #f4b740; border: 1px solid rgba(244,183,64,.3); }
+.rec-hold { background: rgba(136,146,176,.15); color: #8892b0; border: 1px solid rgba(136,146,176,.3); }
+.rec-add  { background: rgba(58,214,166,.15);  color: #3ad6a6; border: 1px solid rgba(58,214,166,.3); }
+.rec-tp   { background: rgba(108,99,255,.15);  color: #9b94ff; border: 1px solid rgba(108,99,255,.3); }
+.pc-row {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 6px; margin-top: 8px;
+}
+.pc-cell {
+  background: rgba(255,255,255,.03); border-radius: 9px;
+  padding: 8px 10px; text-align: center;
+}
+.pc-lbl { font-size: .6rem; text-transform: uppercase; letter-spacing: .06em; color: var(--t2); }
+.pc-val { font-size: .85rem; font-weight: 700; color: var(--t1); display: block; margin-top: 2px; }
+.pc-err { font-size: .76rem; color: var(--bear); margin-top: 8px; }
+
+/* ══════════════════════════════
    MOBILE
 ══════════════════════════════ */
 @media (max-width: 640px) {
@@ -678,25 +725,68 @@ def load_data(ticker: str, period: str, source: str = "yahoo") -> pd.DataFrame:
 
 
 def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    for col in ["Open", "High", "Low", "Close", "Volume"]:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
     c = df["Close"]
+    h, l = df["High"], df["Low"]
+
     df["SMA20"] = c.rolling(20).mean()
     df["SMA50"] = c.rolling(50).mean()
+    df["EMA9"]  = c.ewm(span=9,  adjust=False).mean()
     df["EMA12"] = c.ewm(span=12, adjust=False).mean()
     df["EMA26"] = c.ewm(span=26, adjust=False).mean()
 
+    # RSI-14
     delta    = c.diff()
     avg_gain = delta.clip(lower=0).ewm(alpha=1/14, adjust=False).mean()
     avg_loss = (-delta.clip(upper=0)).ewm(alpha=1/14, adjust=False).mean()
-    df["RSI"] = 100 - 100 / (1 + avg_gain / avg_loss.replace(0, pd.NA))
+    avg_loss = avg_loss.where(avg_loss != 0, float("nan"))
+    df["RSI"] = 100 - 100 / (1 + avg_gain / avg_loss)
 
+    # MACD
     df["MACD"]        = df["EMA12"] - df["EMA26"]
     df["MACD_SIGNAL"] = df["MACD"].ewm(span=9, adjust=False).mean()
     df["MACD_HIST"]   = df["MACD"] - df["MACD_SIGNAL"]
 
-    h, l, pc   = df["High"], df["Low"], c.shift(1)
-    tr         = pd.concat([(h-l), (h-pc).abs(), (l-pc).abs()], axis=1).max(axis=1)
+    # ATR & Volume MA
+    pc = c.shift(1)
+    tr = pd.concat([(h-l), (h-pc).abs(), (l-pc).abs()], axis=1).max(axis=1)
     df["ATR"]      = tr.ewm(span=14, adjust=False).mean()
     df["VOL_MA20"] = df["Volume"].rolling(20).mean()
+
+    # Bollinger Bands (20, ±2σ)
+    std20        = c.rolling(20).std()
+    df["BB_UP"]  = df["SMA20"] + 2 * std20
+    df["BB_LOW"] = df["SMA20"] - 2 * std20
+    band_width   = df["BB_UP"] - df["BB_LOW"]
+    band_width   = band_width.where(band_width != 0, float("nan"))
+    df["BB_PCT"] = (c - df["BB_LOW"]) / band_width  # 0 = lower band, 1 = upper band
+
+    # Stochastic %K/%D (14,3)
+    low14  = l.rolling(14).min()
+    high14 = h.rolling(14).max()
+    stoch_range = high14 - low14
+    stoch_range = stoch_range.where(stoch_range != 0, float("nan"))
+    df["STOCH_K"] = 100 * (c - low14) / stoch_range
+    df["STOCH_D"] = df["STOCH_K"].rolling(3).mean()
+
+    # ADX (14) — kekuatan & arah tren
+    up_move  = h.diff()
+    dn_move  = -l.diff()
+    plus_dm  = up_move.where((up_move > dn_move) & (up_move > 0), 0.0)
+    minus_dm = dn_move.where((dn_move > up_move) & (dn_move > 0), 0.0)
+    atr14    = tr.ewm(span=14, adjust=False).mean()
+    atr14    = atr14.where(atr14 != 0, float("nan"))
+    df["PLUS_DI"]  = 100 * plus_dm.ewm(span=14, adjust=False).mean() / atr14
+    df["MINUS_DI"] = 100 * minus_dm.ewm(span=14, adjust=False).mean() / atr14
+    di_sum = df["PLUS_DI"] + df["MINUS_DI"]
+    di_sum = di_sum.where(di_sum != 0, float("nan"))
+    dx     = 100 * (df["PLUS_DI"] - df["MINUS_DI"]).abs() / di_sum
+    dx     = pd.to_numeric(dx, errors="coerce")
+    df["ADX"] = dx.ewm(span=14, adjust=False).mean()
+
     return df
 
 
@@ -706,53 +796,134 @@ def score_and_check(df: pd.DataFrame):
     score = 0
     checks = []
 
-    if last["Close"] > last["SMA20"]:
+    # ── 1. Trend MA ────────────────────────────────
+    above20 = last["Close"] > last["SMA20"]
+    above50 = (not pd.isna(last["SMA50"])) and last["Close"] > last["SMA50"]
+    if above20 and above50:
+        score += 2
+        checks.append(("Trend MA", "bullish", "Di atas SMA-20 & SMA-50 — uptrend"))
+    elif above20:
         score += 1
-        checks.append(("SMA-20", "bullish", "Harga di atas SMA-20"))
+        checks.append(("SMA-20", "bullish", "Di atas SMA-20 tapi masih di bawah SMA-50"))
+    elif above50:
+        checks.append(("SMA-50", "neutral", "Di atas SMA-50 tapi di bawah SMA-20"))
     else:
-        checks.append(("SMA-20", "bearish", "Harga di bawah SMA-20"))
+        score -= 1
+        checks.append(("Trend MA", "bearish", "Di bawah SMA-20 & SMA-50 — downtrend ⚠️"))
 
-    if not pd.isna(last["SMA50"]):
-        if last["Close"] > last["SMA50"]:
+    # ── 2. EMA-9 momentum pendek ───────────────────
+    if not pd.isna(last["EMA9"]) and not pd.isna(prev["EMA9"]):
+        if last["Close"] > last["EMA9"] and last["EMA9"] > prev["EMA9"]:
             score += 1
-            checks.append(("SMA-50", "bullish", "Harga di atas SMA-50"))
+            checks.append(("EMA-9", "bullish", "Harga di atas EMA-9 & EMA naik"))
+        elif last["Close"] < last["EMA9"]:
+            checks.append(("EMA-9", "bearish", "Harga di bawah EMA-9"))
         else:
-            checks.append(("SMA-50", "bearish", "Harga di bawah SMA-50"))
+            checks.append(("EMA-9", "neutral", "EMA-9 mendatar"))
 
+    # ── 3. RSI-14 ──────────────────────────────────
     rsi = last["RSI"]
     if not pd.isna(rsi):
-        if 45 <= rsi <= 65:
+        if 50 <= rsi <= 65:
             score += 2
-            checks.append((f"RSI {rsi:.0f}", "bullish", "Momentum optimal (45–65)"))
-        elif rsi < 35:
+            checks.append((f"RSI {rsi:.0f}", "bullish", "Momentum optimal (50–65)"))
+        elif 40 <= rsi < 50:
             score += 1
-            checks.append((f"RSI {rsi:.0f}", "bullish", "Oversold — potensi rebound"))
+            checks.append((f"RSI {rsi:.0f}", "bullish", "Momentum membaik"))
+        elif rsi < 30:
+            score += 1
+            checks.append((f"RSI {rsi:.0f}", "bullish", "Oversold — potensi rebound kuat"))
+        elif 30 <= rsi < 40:
+            checks.append((f"RSI {rsi:.0f}", "neutral", "Zona lemah — waspada"))
         elif rsi > 72:
             score -= 1
             checks.append((f"RSI {rsi:.0f}", "bearish", "Overbought — rawan koreksi"))
         else:
             checks.append((f"RSI {rsi:.0f}", "neutral", "Zona netral"))
 
+    # ── 4. MACD ────────────────────────────────────
     macd_bull  = last["MACD"] > last["MACD_SIGNAL"]
     fresh_bull = macd_bull and (prev["MACD"] <= prev["MACD_SIGNAL"])
+    above_zero = last["MACD"] > 0
     if fresh_bull:
         score += 2
         checks.append(("MACD", "bullish", "Golden cross baru ⚡"))
+    elif macd_bull and above_zero:
+        score += 1
+        checks.append(("MACD", "bullish", "Di atas signal & zero line"))
     elif macd_bull:
         score += 1
         checks.append(("MACD", "bullish", "Di atas signal line"))
+    elif not above_zero:
+        score -= 1
+        checks.append(("MACD", "bearish", "Di bawah signal & zero line ⚠️"))
     else:
         checks.append(("MACD", "bearish", "Di bawah signal line"))
 
+    # ── 5. Bollinger Bands ─────────────────────────
+    bb_pct = last["BB_PCT"]
+    if not pd.isna(bb_pct):
+        if bb_pct <= 0.15:
+            score += 2
+            checks.append((f"BB {bb_pct:.0%}", "bullish", "Menyentuh lower band — setup beli potensial 🎯"))
+        elif bb_pct <= 0.30:
+            score += 1
+            checks.append((f"BB {bb_pct:.0%}", "bullish", "Dekat lower band — harga murah relatif"))
+        elif bb_pct >= 0.85:
+            score -= 1
+            checks.append((f"BB {bb_pct:.0%}", "bearish", "Menyentuh upper band — rawan koreksi"))
+        else:
+            checks.append((f"BB {bb_pct:.0%}", "neutral", "Posisi tengah Bollinger Band"))
+
+    # ── 6. Stochastic (14,3) ───────────────────────
+    sk = last["STOCH_K"]
+    sd = last["STOCH_D"]
+    pk = prev["STOCH_K"]
+    pd_ = prev["STOCH_D"]
+    if not pd.isna(sk) and not pd.isna(sd) and not pd.isna(pk) and not pd.isna(pd_):
+        cross_up = (sk > sd) and (pk <= pd_)
+        if sk < 20 and cross_up:
+            score += 2
+            checks.append((f"Stoch {sk:.0f}", "bullish", "Oversold + golden cross ⚡"))
+        elif sk < 20:
+            score += 1
+            checks.append((f"Stoch {sk:.0f}", "bullish", "Oversold — tunggu konfirmasi crossover"))
+        elif sk > 80:
+            score -= 1
+            checks.append((f"Stoch {sk:.0f}", "bearish", "Overbought — hati-hati"))
+        elif sk > sd and pk <= pd_:
+            score += 1
+            checks.append((f"Stoch {sk:.0f}", "bullish", "Cross up di zona normal"))
+        else:
+            checks.append((f"Stoch {sk:.0f}", "neutral", "Zona normal"))
+
+    # ── 7. ADX kekuatan tren ───────────────────────
+    adx = last["ADX"]
+    pdi = last["PLUS_DI"]
+    mdi = last["MINUS_DI"]
+    if not pd.isna(adx) and not pd.isna(pdi) and not pd.isna(mdi):
+        if adx >= 25 and pdi > mdi:
+            score += 1
+            checks.append((f"ADX {adx:.0f}", "bullish", "Tren naik kuat (+DI > −DI)"))
+        elif adx >= 25 and pdi < mdi:
+            score -= 2
+            checks.append((f"ADX {adx:.0f}", "bearish", "Tren TURUN kuat — sebaiknya hindari ⚠️"))
+        elif adx < 20:
+            checks.append((f"ADX {adx:.0f}", "neutral", "Sideways / lemah — selektif"))
+        else:
+            dir_lbl = "naik" if pdi > mdi else "turun"
+            checks.append((f"ADX {adx:.0f}", "neutral", f"Tren sedang {dir_lbl}"))
+
+    # ── 8. Volume ──────────────────────────────────
     vol_r = last["Volume"] / last["VOL_MA20"] if last["VOL_MA20"] > 0 else 1.0
     if vol_r >= 1.5:
         score += 1
-        checks.append((f"Volume {vol_r:.1f}×", "bullish", "Lonjakan volume"))
+        checks.append((f"Volume {vol_r:.1f}×", "bullish", "Lonjakan volume — konfirmasi kuat"))
     elif vol_r >= 0.8:
         checks.append((f"Volume {vol_r:.1f}×", "neutral", "Volume normal"))
     else:
         score -= 1
-        checks.append((f"Volume {vol_r:.1f}×", "bearish", "Volume sepi"))
+        checks.append((f"Volume {vol_r:.1f}×", "bearish", "Volume sepi — sinyal kurang valid"))
 
     return score, checks
 
@@ -869,11 +1040,24 @@ def pct(new: float, base: float) -> str:
     return f"{v:+.1f}%"
 
 def tier(score: int) -> tuple[str, str]:
-    if score >= 6: return "🔥 Kuat Sekali", "b-fire"
-    if score >= 4: return "🟢 Kuat",        "b-kuat"
-    if score >= 2: return "🟡 Moderat",     "b-mod"
-    if score >= 0: return "🟠 Lemah",       "b-lemah"
+    if score >= 9: return "🔥 Kuat Sekali", "b-fire"
+    if score >= 6: return "🟢 Kuat",        "b-kuat"
+    if score >= 3: return "🟡 Moderat",     "b-mod"
+    if score >= 1: return "🟠 Lemah",       "b-lemah"
     return "🔴 Skip", "b-skip"
+
+def portfolio_recommendation(score: int, pnl_pct: float) -> tuple[str, str]:
+    if pnl_pct >= 20:
+        return "💰 Take Profit", "rec-tp"
+    if score >= 4 and pnl_pct <= -10:
+        return "💪 Average Down", "rec-add"
+    if score >= 2 and pnl_pct >= 5:
+        return "✅ Hold / TP", "rec-tp"
+    if score <= 0 and pnl_pct <= -20:
+        return "✂️ Cut Loss", "rec-cut"
+    if score <= 1 and pnl_pct <= -10:
+        return "⚠️ Waspada", "rec-warn"
+    return "⏳ Hold", "rec-hold"
 
 def _svg(d: str, color: str = "currentColor", size: int = 9) -> str:
     return (
@@ -1097,16 +1281,120 @@ def html_signals(checks: list) -> str:
     return "\n".join(rows)
 
 
+def _fmt_idr_compact(val: float) -> str:
+    a = abs(val)
+    sign = "+" if val >= 0 else "-"
+    if a >= 1_000_000_000:
+        return f"{sign}{a/1_000_000_000:.2f}B"
+    if a >= 1_000_000:
+        return f"{sign}{a/1_000_000:.2f}jt"
+    if a >= 1_000:
+        return f"{sign}{a/1_000:.1f}rb"
+    return f"{sign}{a:.0f}"
+
+
+def html_portfolio_cards(items: list) -> str:
+    cards = ['<div class="port-grid">']
+    for item in items:
+        code = html.escape(str(item["display"]))
+        name = html.escape(str(item["name"]))
+        cur  = item["cur"]
+
+        if item.get("error"):
+            cards.append(f"""
+<div class="pc">
+  <div class="pc-top">
+    <div>
+      <div class="sc-ticker">{code}</div>
+      <div class="sc-name">{name}</div>
+    </div>
+  </div>
+  <div class="pc-err">⚠ Gagal memuat: {html.escape(str(item['error']))}</div>
+</div>""")
+            continue
+
+        buy   = item["buy_price"]
+        qty   = item["qty"]
+        curr  = item.get("current_price", buy)
+        pnl_p = item.get("pnl_pct", 0.0)
+        slbl  = item.get("signal_lbl", "—")
+        rec   = item.get("rec", "—")
+        rcls  = item.get("rec_cls", "rec-hold")
+
+        pnl_cls  = "pnl-pos" if pnl_p >= 0 else "pnl-neg"
+        pnl_sign = "+" if pnl_p >= 0 else ""
+        pnl_idr  = (curr - buy) * qty
+        pnl_str  = _fmt_idr_compact(pnl_idr)
+        pnl_idr_cls = "pnl-pos" if pnl_idr >= 0 else "pnl-neg"
+
+        cards.append(f"""
+<div class="pc">
+  <div class="pc-top">
+    <div>
+      <div class="sc-ticker">{code}</div>
+      <div class="sc-name">{name}</div>
+      <span class="pnl-big {pnl_cls}">{pnl_sign}{pnl_p:.1f}%</span>
+    </div>
+    <span class="rec-badge {rcls}">{rec}</span>
+  </div>
+  <div class="pc-row">
+    <div class="pc-cell">
+      <div class="pc-lbl">Harga Beli</div>
+      <span class="pc-val">{rp(buy, cur)}</span>
+    </div>
+    <div class="pc-cell">
+      <div class="pc-lbl">Harga Kini</div>
+      <span class="pc-val">{rp(curr, cur)}</span>
+    </div>
+    <div class="pc-cell">
+      <div class="pc-lbl">Signal</div>
+      <span class="pc-val" style="font-size:.76rem">{slbl}</span>
+    </div>
+    <div class="pc-cell">
+      <div class="pc-lbl">P&amp;L</div>
+      <span class="pc-val {pnl_idr_cls}">{pnl_str}</span>
+    </div>
+  </div>
+</div>""")
+
+    cards.append("</div>")
+    return "\n".join(cards)
+
+
 # ════════════════════════════════════════════════════
 # CHART
 # ════════════════════════════════════════════════════
 
 def make_chart(df: pd.DataFrame, label: str, levels: dict = None, cur: str = "IDR"):
     fig = make_subplots(
-        rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.04,
-        row_heights=[0.55, 0.22, 0.23],
-        subplot_titles=(f"{label} — Candlestick + MA", "RSI-14", "MACD (12,26,9)"),
+        rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.03,
+        row_heights=[0.48, 0.18, 0.17, 0.17],
+        subplot_titles=(
+            f"{label} — Candlestick + MA + Bollinger Bands",
+            "RSI-14",
+            "MACD (12,26,9)",
+            "Stochastic (14,3)",
+        ),
     )
+
+    # ── Panel 1: Harga ──────────────────────────────
+    # Bollinger Bands (dibuat dulu agar berada di belakang candle)
+    fig.add_trace(go.Scatter(
+        x=df.index, y=df["BB_UP"], name="BB Atas",
+        line=dict(color="rgba(108,99,255,0.35)", width=1),
+        showlegend=False,
+    ), row=1, col=1)
+    fig.add_trace(go.Scatter(
+        x=df.index, y=df["BB_LOW"], name="BB Bawah",
+        line=dict(color="rgba(108,99,255,0.35)", width=1),
+        fill="tonexty", fillcolor="rgba(108,99,255,0.06)",
+        showlegend=False,
+    ), row=1, col=1)
+    fig.add_trace(go.Scatter(
+        x=df.index, y=df["SMA20"], name="SMA-20/BB Mid",
+        line=dict(color="rgba(108,99,255,0.5)", width=1, dash="dot"),
+        showlegend=False,
+    ), row=1, col=1)
 
     fig.add_trace(go.Candlestick(
         x=df.index, open=df["Open"], high=df["High"],
@@ -1115,8 +1403,8 @@ def make_chart(df: pd.DataFrame, label: str, levels: dict = None, cur: str = "ID
         increasing_fillcolor="#3ad6a6", decreasing_fillcolor="#ff6b6b",
     ), row=1, col=1)
     fig.add_trace(go.Scatter(
-        x=df.index, y=df["SMA20"], name="SMA-20",
-        line=dict(color="#5b8def", width=1.4),
+        x=df.index, y=df["EMA9"], name="EMA-9",
+        line=dict(color="#e879f9", width=1.2),
     ), row=1, col=1)
     fig.add_trace(go.Scatter(
         x=df.index, y=df["SMA50"], name="SMA-50",
@@ -1137,6 +1425,7 @@ def make_chart(df: pd.DataFrame, label: str, levels: dict = None, cur: str = "ID
                 row=1, col=1,
             )
 
+    # ── Panel 2: RSI ────────────────────────────────
     fig.add_trace(go.Scatter(
         x=df.index, y=df["RSI"], name="RSI",
         line=dict(color="#5b8def", width=1.4),
@@ -1145,6 +1434,7 @@ def make_chart(df: pd.DataFrame, label: str, levels: dict = None, cur: str = "ID
     fig.add_hline(y=50, line_color="#3d4f6b", line_dash="dot", line_width=1, row=2, col=1)
     fig.add_hline(y=30, line_color="#3ad6a6", line_dash="dot", line_width=1, row=2, col=1)
 
+    # ── Panel 3: MACD ───────────────────────────────
     hist_colors = ["#3ad6a6" if v >= 0 else "#ff6b6b" for v in df["MACD_HIST"].fillna(0)]
     fig.add_trace(go.Bar(
         x=df.index, y=df["MACD_HIST"], name="Histogram",
@@ -1159,20 +1449,34 @@ def make_chart(df: pd.DataFrame, label: str, levels: dict = None, cur: str = "ID
         line=dict(color="#f4b740", width=1.4),
     ), row=3, col=1)
 
+    # ── Panel 4: Stochastic ─────────────────────────
+    fig.add_trace(go.Scatter(
+        x=df.index, y=df["STOCH_K"], name="Stoch %K",
+        line=dict(color="#5b8def", width=1.4),
+    ), row=4, col=1)
+    fig.add_trace(go.Scatter(
+        x=df.index, y=df["STOCH_D"], name="Stoch %D",
+        line=dict(color="#f4b740", width=1.4),
+    ), row=4, col=1)
+    fig.add_hline(y=80, line_color="#ff6b6b", line_dash="dot", line_width=1, row=4, col=1)
+    fig.add_hline(y=50, line_color="#3d4f6b", line_dash="dot", line_width=1, row=4, col=1)
+    fig.add_hline(y=20, line_color="#3ad6a6", line_dash="dot", line_width=1, row=4, col=1)
+
     fig.update_layout(
         template="plotly_dark",
-        height=680,
+        height=820,
         margin=dict(l=10, r=10, t=40, b=10),
         xaxis_rangeslider_visible=False,
-        legend=dict(orientation="h", y=1.07, font_size=11),
+        legend=dict(orientation="h", y=1.05, font_size=11),
         paper_bgcolor="#0a0f1e",
         plot_bgcolor="#0a0f1e",
         font=dict(family="Inter, system-ui, sans-serif"),
     )
-    for i in range(1, 4):
+    for i in range(1, 5):
         fig.update_xaxes(gridcolor="#1b2847", showgrid=True, row=i, col=1)
         fig.update_yaxes(gridcolor="#1b2847", showgrid=True, row=i, col=1)
     fig.update_yaxes(range=[0, 100], row=2, col=1)
+    fig.update_yaxes(range=[0, 100], row=4, col=1)
     return fig
 
 
@@ -1233,8 +1537,8 @@ with st.container():
         )
     with c4:
         min_score = st.slider(
-            "Skor sinyal minimum", 0, 6, 2,
-            help="0 = semua · 2 = moderat ke atas · 4 = kuat saja",
+            "Skor sinyal minimum", 0, 10, 3,
+            help="0 = semua · 3 = moderat ke atas · 6 = kuat saja · 9 = kuat sekali",
         )
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -1245,7 +1549,7 @@ indodax_universe, indodax_price_steps = load_indodax_markets()
 
 
 # ── Tabs ────────────────────────────────────────────
-tab_scan, tab_detail = st.tabs(["🔍  Scanner", "📊  Analisa Detail"])
+tab_scan, tab_portfolio, tab_detail = st.tabs(["🔍  Scanner", "💼  Portofolio", "📊  Analisa Detail"])
 
 
 # ════════════════════════════════════════════════════
@@ -1460,7 +1764,186 @@ with tab_scan:
 
 
 # ════════════════════════════════════════════════════
-# TAB 2: ANALISA DETAIL
+# TAB 2: PORTFOLIO MONITOR
+# ════════════════════════════════════════════════════
+with tab_portfolio:
+    st.markdown(
+        '<p style="color:var(--t2);font-size:.82rem;margin-bottom:14px">'
+        "Monitor posisi trading Anda. Masukkan aset &amp; harga beli untuk melihat P&amp;L terkini "
+        "beserta sinyal teknikal — apakah perlu <b style='color:#ff6b6b'>Cut Loss</b>, "
+        "<b style='color:#8892b0'>Hold</b>, atau "
+        "<b style='color:#3ad6a6'>Average Down</b>.</p>",
+        unsafe_allow_html=True,
+    )
+
+    if "portfolio" not in st.session_state:
+        st.session_state["portfolio"] = []
+
+    # ── Form tambah aset ────────────────────────────
+    with st.expander("➕ Tambah Aset ke Portofolio", expanded=not st.session_state["portfolio"]):
+        p_market = st.selectbox(
+            "Pasar",
+            ["Crypto Indodax (IDR)", "Saham IDX", "Saham US", "Crypto USD"],
+            key="p_market",
+        )
+
+        if p_market == "Crypto Indodax (IDR)":
+            p_options = list(indodax_universe.keys())
+            p_fmt     = lambda k: f"{display_ticker(k, 'indodax')}  —  {indodax_universe[k]}"
+            p_source  = "indodax"
+            p_cur     = "IDR_INDODAX"
+            p_plbl    = "Harga Beli (IDR)"
+        elif p_market == "Saham IDX":
+            p_options = list(idx_universe.keys())
+            p_fmt     = lambda k: f"{k}  —  {idx_universe[k]}"
+            p_source  = "yahoo"
+            p_cur     = "IDR"
+            p_plbl    = "Harga Beli (Rp)"
+        elif p_market == "Saham US":
+            p_options = list(us_universe.keys())
+            p_fmt     = lambda k: f"{k}  —  {us_universe[k]}"
+            p_source  = "yahoo"
+            p_cur     = "USD"
+            p_plbl    = "Harga Beli ($)"
+        else:
+            p_options = list(CRYPTO_UNIVERSE.keys())
+            p_fmt     = lambda k: f"{k.replace('-USD','')}  —  {CRYPTO_UNIVERSE[k]}"
+            p_source  = "yahoo"
+            p_cur     = "USD"
+            p_plbl    = "Harga Beli ($)"
+
+        p_asset = st.selectbox("Aset", p_options, format_func=p_fmt, key="p_asset")
+
+        pfc1, pfc2 = st.columns(2)
+        with pfc1:
+            p_buy = st.number_input(p_plbl, min_value=0.0, value=0.0, format="%f", key="p_buy")
+        with pfc2:
+            p_qty = st.number_input("Jumlah (qty)", min_value=0.0, value=0.0, format="%f", key="p_qty")
+
+        if st.button("Tambah ke Portofolio", key="p_add_btn"):
+            if p_buy <= 0 or p_qty <= 0:
+                st.error("Harga beli dan jumlah harus lebih dari 0.")
+            else:
+                if p_market == "Crypto Indodax (IDR)":
+                    tk = p_asset
+                    pdisplay = display_ticker(p_asset, "indodax")
+                    pname = indodax_universe.get(p_asset, p_asset)
+                elif p_market == "Saham IDX":
+                    tk = f"{p_asset}.JK"
+                    pdisplay = p_asset
+                    pname = idx_universe.get(p_asset, p_asset)
+                elif p_market == "Saham US":
+                    tk = p_asset
+                    pdisplay = p_asset
+                    pname = us_universe.get(p_asset, p_asset)
+                else:
+                    tk = p_asset
+                    pdisplay = p_asset.replace("-USD", "")
+                    pname = CRYPTO_UNIVERSE.get(p_asset, p_asset)
+
+                if any(x["ticker"] == tk for x in st.session_state["portfolio"]):
+                    st.warning(f"{pdisplay} sudah ada di portofolio.")
+                else:
+                    st.session_state["portfolio"].append({
+                        "source": p_source, "ticker": tk,
+                        "display": pdisplay, "name": pname,
+                        "buy_price": float(p_buy), "qty": float(p_qty),
+                        "cur": p_cur,
+                    })
+                    st.success(f"✅ {pdisplay} ditambahkan.")
+                    st.rerun()
+
+    # ── Tampilan portofolio ─────────────────────────
+    portfolio = st.session_state["portfolio"]
+
+    if not portfolio:
+        st.info("Portofolio kosong. Tambahkan aset di atas untuk mulai monitor.")
+    else:
+        pb1, pb2 = st.columns([1, 1])
+        with pb1:
+            do_refresh_port = st.button("🔄 Refresh Sinyal", key="p_refresh")
+        with pb2:
+            if st.button("🗑 Hapus Semua", key="p_clear"):
+                st.session_state["portfolio"] = []
+                st.session_state.pop("portfolio_results", None)
+                st.rerun()
+
+        if do_refresh_port:
+            pbar = st.progress(0, text="Memuat sinyal portofolio…")
+            results = []
+            for pi, pitem in enumerate(portfolio):
+                if pitem["source"] == "indodax" and pi > 0:
+                    time.sleep(INDODAX_SCAN_DELAY_SECONDS)
+                pbar.progress(
+                    (pi + 1) / len(portfolio),
+                    text=f"Menganalisa {pitem['display']}… ({pi+1}/{len(portfolio)})",
+                )
+                res = dict(pitem)
+                try:
+                    df_p = load_data(pitem["ticker"], h_params["period"], pitem["source"])
+                    if len(df_p) < 30:
+                        res["error"] = "Data terlalu sedikit"
+                        results.append(res)
+                        continue
+                    df_p    = add_indicators(df_p)
+                    last_p  = df_p.iloc[-1]
+                    curr_p  = float(last_p["Close"])
+                    pnl_pct = (curr_p - pitem["buy_price"]) / pitem["buy_price"] * 100
+                    sc_p, _ = score_and_check(df_p)
+                    lbl_p, _    = tier(sc_p)
+                    rec_p, rcls = portfolio_recommendation(sc_p, pnl_pct)
+                    res.update({
+                        "current_price": curr_p,
+                        "pnl_pct": pnl_pct,
+                        "score": sc_p,
+                        "signal_lbl": lbl_p,
+                        "rec": rec_p,
+                        "rec_cls": rcls,
+                        "error": None,
+                    })
+                except Exception as ex:
+                    res["error"] = str(ex)
+                results.append(res)
+            pbar.empty()
+            st.session_state["portfolio_results"] = results
+
+        results_display = st.session_state.get("portfolio_results", portfolio)
+
+        # Ringkasan total P&L
+        refreshed = [r for r in results_display if r.get("current_price") and not r.get("error")]
+        if refreshed:
+            total_modal = sum(r["buy_price"] * r["qty"] for r in refreshed)
+            total_now   = sum(r["current_price"] * r["qty"] for r in refreshed)
+            total_pnl   = total_now - total_modal
+            total_pct   = total_pnl / total_modal * 100 if total_modal else 0
+            cut_count   = sum(1 for r in refreshed if r.get("rec_cls") == "rec-cut")
+            add_count   = sum(1 for r in refreshed if r.get("rec_cls") == "rec-add")
+            mc1, mc2, mc3, mc4 = st.columns(4)
+            mc1.metric("Modal", f"Rp {total_modal:,.0f}".replace(",", ".") if total_modal >= 1 else f"{total_modal:.4f}")
+            mc2.metric("Nilai Kini", f"Rp {total_now:,.0f}".replace(",", ".") if total_now >= 1 else f"{total_now:.4f}")
+            mc3.metric("P&L Total", _fmt_idr_compact(total_pnl), f"{'+' if total_pct >= 0 else ''}{total_pct:.1f}%")
+            mc4.metric("Sinyal", f"✂️ {cut_count} Cut · 💪 {add_count} Add")
+
+        st.markdown(html_portfolio_cards(results_display), unsafe_allow_html=True)
+
+        # Tombol hapus per aset
+        st.markdown('<div class="sec-lbl" style="margin-top:18px">Kelola Aset</div>', unsafe_allow_html=True)
+        for pi, pitem in enumerate(portfolio):
+            dc1, dc2 = st.columns([5, 1])
+            with dc1:
+                st.caption(f"{pitem['display']} — {pitem['name']} · Beli: {rp(pitem['buy_price'], pitem['cur'])} × {pitem['qty']}")
+            with dc2:
+                if st.button("Hapus", key=f"del_port_{pi}"):
+                    st.session_state["portfolio"].pop(pi)
+                    pr = st.session_state.get("portfolio_results", [])
+                    if pi < len(pr):
+                        pr.pop(pi)
+                    st.session_state["portfolio_results"] = pr
+                    st.rerun()
+
+
+# ════════════════════════════════════════════════════
+# TAB 3: ANALISA DETAIL
 # ════════════════════════════════════════════════════
 with tab_detail:
     col_m, col_t, col_p = st.columns([1, 1, 1])
