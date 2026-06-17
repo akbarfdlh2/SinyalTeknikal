@@ -654,7 +654,6 @@ def load_indodax_markets() -> tuple[dict, dict]:
             symbol = pair.get("symbol", "")
             if (
                 pair.get("base_currency") != "idr"
-                or pair.get("is_maintenance")
                 or pair.get("is_market_suspended")
                 or not symbol
             ):
@@ -662,6 +661,8 @@ def load_indodax_markets() -> tuple[dict, dict]:
 
             ticker = summaries.get(pair.get("ticker_id", ""), {})
             name = ticker.get("name") or pair.get("description") or symbol
+            if pair.get("is_maintenance"):
+                name = f"{name} (Maintenance)"
             volume_idr = pd.to_numeric(ticker.get("vol_idr", 0), errors="coerce")
             volume_idr = 0.0 if pd.isna(volume_idr) else float(volume_idr)
             markets.append((symbol, name, volume_idr))
